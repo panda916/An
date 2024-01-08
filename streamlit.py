@@ -13,12 +13,11 @@ import streamlit.components.v1 as stc
 #import libraries and set up environment
 import numpy as np
 import pandas as pd
-from scikit-learn import preprocessing 
-from scikit-learn import ensemble 
-from scikit-learn.preprocessing import LabelEncoder
-from scikit-learn.ensemble import IsolationForest
+
+#from sklearn.preprocessing import LabelEncoder
+#from sklearn.ensemble import IsolationForest
 import pyodbc
-from scikit-learn import tree
+#from sklearn import tree
 from pandas.api.types import is_numeric_dtype
 import time
 import pickle
