@@ -13,7 +13,9 @@ import streamlit.components.v1 as stc
 #import libraries and set up environment
 import numpy as np
 import pandas as pd
-#from scikit-learn.preprocessing import LabelEncoder
+from sklearn import preprocessing 
+from sklearn import ensemble 
+from scikit-learn.preprocessing import LabelEncoder
 from sklearn.ensemble import IsolationForest
 import pyodbc
 from sklearn import tree
