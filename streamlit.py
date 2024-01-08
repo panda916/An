@@ -29,7 +29,7 @@ def main():
     menu = ["Home","Dataset","DocumentFiles","About"]
     choice = st.sidebar.selectbox("Menu",menu)
     st.subheader("Dataset")
-    data_file = st.file_uploader("Upload CSV",type=['csv'])
+    data_file = st.file_uploader("Upload CSV")
     
     
 
@@ -37,7 +37,7 @@ def main():
         if data_file is not None:
             file_details = {"Filename":data_file.name,"FileType":data_file.type,"FileSize":data_file.size}
             st.write(file_details)
-            df = pd.read_csv(data_file)
+            df = pd.read_excel(data_file)
             start = time.time()
             B01_01_TT_LOAD_FROM_CSV = df
             end = time.time()
@@ -52,7 +52,7 @@ def main():
 
             B01_01_TT_LOAD_FROM_CSV.shape
             
-            ZF_COLUMNS = ['ZF_KUNNR_LIFNR_EMPFG','ZNME1','ZBNKN','RBETR','ZLAND','ZBNKS']
+            ZF_COLUMNS = ['ZNME1','ZBNKN','RBETR','ZLAND','ZBNKS']
             B01_02_TT_TRAIN_MODEL = B01_01_TT_LOAD_FROM_CSV[ZF_COLUMNS]
             
             B01_02_TT_TRAIN_MODEL = B01_02_TT_TRAIN_MODEL.astype(str)
@@ -75,7 +75,7 @@ def main():
             # Create a Isolation Forest model that is called isf and training it with B01_02_TT_TRAIN_MODEL
             # Note: n_estimators, max_samples, contamination, max_features should be adjusted to fit with different data set
             start = time.time()
-            ZF_ISF_MODEL = IsolationForest(n_estimators = 500, max_samples = 500000, contamination = 0.001, max_features = 7)
+            ZF_ISF_MODEL = IsolationForest(n_estimators = 500, max_samples = 500000, contamination = 0.001, max_features = 2)
             ZF_ISF_MODEL.fit(B01_02_TT_TRAIN_MODEL)
             end = time.time()
 
@@ -99,7 +99,7 @@ def main():
             B01_01_TT_LOAD_FROM_CSV.drop(columns = 'index', inplace = True)
             end = time.time()
             print(end-start)
-            
+            st.write('Score')
             st.dataframe(B01_01_TT_LOAD_FROM_CSV)
             
 # In[33]:
