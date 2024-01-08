@@ -24,16 +24,16 @@ import pickle
 
 def main():
     
-    st.title("File Upload Tutorial")
+    st.title("Upload excel file")
 
     menu = ["Home","Dataset","DocumentFiles","About"]
     choice = st.sidebar.selectbox("Menu",menu)
     st.subheader("Dataset")
-    data_file = st.file_uploader("Upload CSV")
+    data_file = st.file_uploader("Upload excel file")
     
     
 
-    if st.button("Process"):
+    if st.button("Training model"):
         if data_file is not None:
             file_details = {"Filename":data_file.name,"FileType":data_file.type,"FileSize":data_file.size}
             st.write(file_details)
@@ -75,7 +75,7 @@ def main():
             # Create a Isolation Forest model that is called isf and training it with B01_02_TT_TRAIN_MODEL
             # Note: n_estimators, max_samples, contamination, max_features should be adjusted to fit with different data set
             start = time.time()
-            ZF_ISF_MODEL = IsolationForest(n_estimators = 500, max_samples = 500000, contamination = 0.001, max_features = 2)
+            ZF_ISF_MODEL = IsolationForest(n_estimators = 500, max_samples = 500000, contamination = 0.001, max_features = 4)
             ZF_ISF_MODEL.fit(B01_02_TT_TRAIN_MODEL)
             end = time.time()
 
@@ -86,21 +86,20 @@ def main():
             
             
             # Load model which is trained before.
-            ZF_MODEL_NAME_SAVE = 'modelname.sav'
-            ZF_ISF_MODEL = pickle.load(open(ZF_MODEL_NAME_SAVE, 'rb'))
+            #ZF_MODEL_NAME_SAVE = 'modelname.sav'
+            #ZF_ISF_MODEL = pickle.load(open(ZF_MODEL_NAME_SAVE, 'rb'))
             
             
             # Add result fields and Index_ field from Isolation Forest model to original data and save to SQL
-            B01_01_TT_LOAD_FROM_CSV.reset_index(inplace = True)
             start = time.time()
             B01_01_TT_LOAD_FROM_CSV['Anomaly'] = pd.DataFrame(ZF_ISF_MODEL.predict(B01_02_TT_TRAIN_MODEL))
             B01_01_TT_LOAD_FROM_CSV['Score'] = pd.DataFrame(ZF_ISF_MODEL.score_samples(B01_02_TT_TRAIN_MODEL))
-            
+            B01_01_TT_LOAD_FROM_CSV.reset_index(inplace = True)
             B01_01_TT_LOAD_FROM_CSV['Index_'] = B01_01_TT_LOAD_FROM_CSV['index']
             B01_01_TT_LOAD_FROM_CSV.drop(columns = 'index', inplace = True)
             end = time.time()
             print(end-start)
-            st.write('Score')
+            st.write('Add result fields from Isolation Forest model to original data')
             st.dataframe(B01_01_TT_LOAD_FROM_CSV)
             
 # In[33]:
