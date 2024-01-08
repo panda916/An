@@ -60,32 +60,13 @@ def main():
     data_file = st.file_uploader("Upload CSV",type=['csv'])
     
     
+
     if st.button("Process"):
-        
-        df = pd.read_csv(data_file)
-        st.dataframe(df)    
-                   
-        data = pd.DataFrame(columns=["date", "desc", "exchange rate"])
-        st.dataframe(data)
-        
-       
-
-            
-        @st.cache_resource 
-        def get_driver():
-            webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
-            return driver.get('https://leanx.eu/en/sap/table/BSEG')
-
-
-        get_driver()
-        
-
-        st.write(driver.current_url)
-            
-
-        driver.quit()
-        st.dataframe(data)
-        data.to_csv(r"test.csv")
+        if data_file is not None:
+            file_details = {"Filename":data_file.name,"FileType":data_file.type,"FileSize":data_file.size}
+            st.write(file_details)
+            df = pd.read_csv(data_file)
+            st.dataframe(df)
 
 
 # In[33]:
