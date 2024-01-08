@@ -91,10 +91,13 @@ def main():
             
             
             # Add result fields and Index_ field from Isolation Forest model to original data and save to SQL
+
+            B01_01_TT_LOAD_FROM_CSV.reset_index(inplace = True)
+            
             start = time.time()
             B01_01_TT_LOAD_FROM_CSV['Anomaly'] = pd.DataFrame(ZF_ISF_MODEL.predict(B01_02_TT_TRAIN_MODEL))
             B01_01_TT_LOAD_FROM_CSV['Score'] = pd.DataFrame(ZF_ISF_MODEL.score_samples(B01_02_TT_TRAIN_MODEL))
-            B01_01_TT_LOAD_FROM_CSV.reset_index(inplace = True)
+            
             B01_01_TT_LOAD_FROM_CSV['Index_'] = B01_01_TT_LOAD_FROM_CSV['index']
             B01_01_TT_LOAD_FROM_CSV.drop(columns = 'index', inplace = True)
             end = time.time()
