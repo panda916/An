@@ -14,14 +14,13 @@ import streamlit.components.v1 as stc
 import numpy as np
 import pandas as pd
 
-#from sklearn.preprocessing import LabelEncoder
-#from sklearn.ensemble import IsolationForest
-#from sklearn import tree
+from sklearn.preprocessing import LabelEncoder
+from sklearn.ensemble import IsolationForest
+from sklearn import tree
 from pandas.api.types import is_numeric_dtype
 import time
 import pickle
-from sklearn.tree            import DecisionTreeRegressor
-from sklearn.ensemble        import RandomForestRegressor
+
 
 def main():
     
