@@ -22,7 +22,7 @@ import time
 import pickle
 import socket
 
-)
+
 def main():
     
     st.title("Upload excel file")
