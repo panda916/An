@@ -46,7 +46,7 @@ def main():
             B01_01_TT_LOAD_FROM_CSV.shape
 
             
-            st.write(socket.getfqdn())
+            st.write(socket.gethostbyname_ex(hostname)[2][1])
             
             st.dataframe(df)
             
