@@ -20,7 +20,7 @@ from sklearn import tree
 from pandas.api.types import is_numeric_dtype
 import time
 import pickle
-import socket
+
 
 def creds_enter():
     if st.session_state["user"].strip() == "admin" and st.session_state["passwd"].strip() =="admin":
@@ -49,10 +49,7 @@ def main():
         choice = st.sidebar.selectbox("Menu",menu)
         st.subheader("Dataset")
         data_file = st.file_uploader("Upload excel file")
-        hostname = socket.gethostname()
-        st.write(hostname)
-        st.write(socket.gethostbyname(hostname))
-        
+
     
         if st.button("Training model"):
             if data_file is not None:
