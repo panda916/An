@@ -31,7 +31,9 @@ def main():
     choice = st.sidebar.selectbox("Menu",menu)
     st.subheader("Dataset")
     data_file = st.file_uploader("Upload excel file")
-    st.write(socket.gethostbyname(socket.gethostname()))
+    hostname = socket.gethostname()
+    st.write(hostname)
+    st.write(socket.gethostbyname(hostname))
     
 
     if st.button("Training model"):
