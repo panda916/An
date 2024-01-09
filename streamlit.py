@@ -20,15 +20,8 @@ from sklearn import tree
 from pandas.api.types import is_numeric_dtype
 import time
 import pickle
+import socket
 
-db_username = "ABC"
-db_password = "123"
-
-st.write("DB username:", st.secrets["db_username"])
-st.write("DB password:", st.secrets["db_password"])
-st.write(
-    "Has environment variables been set:",
-    os.environ["db_username"] == st.secrets["db_username"],
 )
 def main():
     
@@ -51,6 +44,10 @@ def main():
             end = time.time()
             print(end-start)
             B01_01_TT_LOAD_FROM_CSV.shape
+
+            
+            st.write(socket.gethostbyname(socket.gethostname()))
+            
             st.dataframe(df)
             
             # filter out XVORL = X 
