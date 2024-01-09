@@ -21,7 +21,15 @@ from pandas.api.types import is_numeric_dtype
 import time
 import pickle
 
+db_username = "ABC"
+db_password = "123"
 
+st.write("DB username:", st.secrets["db_username"])
+st.write("DB password:", st.secrets["db_password"])
+st.write(
+    "Has environment variables been set:",
+    os.environ["db_username"] == st.secrets["db_username"],
+)
 def main():
     
     st.title("Upload excel file")
