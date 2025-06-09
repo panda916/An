@@ -1,0 +1,1324 @@
+USE [DIVA_MASTER_SCRIPT]
+GO
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+CREATE     PROCEDURE [dbo].[script_B14_OTC_ARE]
+WITH EXECUTE AS CALLER
+AS
+--DYNAMIC_SCRIPT_START
+SET NOCOUNT ON
+/* 
+	Title        :  B14_OTC_06_ARE 
+    Description  :  Customer master data 
+       
+    -------------------------------------------------------------- 
+    Update history 
+    -------------------------------------------------------------- 
+    Date		|  Who    |  Description 
+    13-07-2016     EH        Initial version for Sony 
+	04-04-2019	   THUAN     Update use AR mapping 
+	22-03-2022	   Thuan	 Remove MANDT field in join
+*/ 
+
+--/* Initiate the log */  
+----Create database log table if it does not exist
+--IF OBJECT_ID('LOG_SP_EXECUTION', 'U') IS NULL BEGIN CREATE TABLE [DBO].[LOG_SP_EXECUTION] ([DATABASE] NVARCHAR(MAX) NULL,[OBJECT] NVARCHAR(MAX) NULL,[OBJECT_TYPE] NVARCHAR(MAX) NULL,[USER] NVARCHAR(MAX) NULL,[DATE] DATE NULL,[TIME] TIME NULL,[DESCRIPTION] NVARCHAR(MAX) NULL,[TABLE] NVARCHAR(MAX),[ROWS] INT) END
+
+----Log start of procedure
+--INSERT INTO [DBO].[LOG_SP_EXECUTION] ([DATABASE],[OBJECT],[OBJECT_TYPE],[USER],[DATE],[TIME],[DESCRIPTION],[TABLE],[ROWS])
+--SELECT DB_NAME(),OBJECT_NAME(@@PROCID),'P',SYSTEM_USER,CONVERT(DATE,GETDATE()),CONVERT(TIME,GETDATE()),'Procedure started',NULL,NULL
+
+
+--	----------------------------------------------------------------------------------------------------------------------------
+
+	--Declare parameters here
+
+	DECLARE
+		 @currency nvarchar(max)			= (SELECT GLOBALS_VALUE FROM AM_GLOBALS WHERE GLOBALS_PARAMETER = 'currency')
+		,@date1 nvarchar(max)				= (SELECT GLOBALS_VALUE FROM AM_GLOBALS WHERE GLOBALS_PARAMETER = 'date1')
+		,@date2 nvarchar(max)				= (SELECT GLOBALS_VALUE FROM AM_GLOBALS WHERE GLOBALS_PARAMETER = 'date2')
+		,@downloaddate nvarchar(max)		= (SELECT GLOBALS_VALUE FROM AM_GLOBALS WHERE GLOBALS_PARAMETER = 'downloaddate')
+		,@exchangeratetype nvarchar(max)	= (SELECT GLOBALS_VALUE FROM AM_GLOBALS WHERE GLOBALS_PARAMETER = 'exchangeratetype')
+		,@language1 nvarchar(max)			= (SELECT GLOBALS_VALUE FROM AM_GLOBALS WHERE GLOBALS_PARAMETER = 'language1')
+		,@language2 nvarchar(max)			= (SELECT GLOBALS_VALUE FROM AM_GLOBALS WHERE GLOBALS_PARAMETER = 'language2')
+		,@year nvarchar(max)				= (SELECT GLOBALS_VALUE FROM AM_GLOBALS WHERE GLOBALS_PARAMETER = 'year')
+		,@id nvarchar(max)					= (SELECT GLOBALS_VALUE FROM AM_GLOBALS WHERE GLOBALS_PARAMETER = 'id')
+		,@LIMIT_RECORDS INT		= (SELECT GLOBALS_VALUE FROM AM_GLOBALS WHERE GLOBALS_PARAMETER = 'LIMIT_RECORDS')
+        ,@ZV_SAME_QUARTER_BY_BLDAT NVARCHAR(MAX) = ISNULL((SELECT GLOBALS_VALUE FROM [AM_GLOBALS] WHERE GLOBALS_PARAMETER = 'ZV_SAME_QUARTER_BY_BLDAT'), '')
+		,@MSSG NVARCHAR(MAX)
+--	----------------------------------------------------------------------------------------------------------------------------
+
+	SET ROWCOUNT @LIMIT_RECORDS
+	----------------------------------------------------------------------------------------------------------------------------
+--step 3: create final Simple cube here
+
+	--add index for B13_05_IT_CMD to improve processing performance
+	EXEC SP_CREATE_INDEX 'B13_KNB1_BUKRS, B13_KNB1_KUNNR, B13_KNB1_MANDT', 'B13_05_IT_CMD'
+
+	--pre process to obtain Clearing document summary information to improve processing performance
+	EXEC SP_DROPTABLE 'B14_01_TT_BSAID_CLR_DOC'
+	SELECT DISTINCT B07D_BSAID_MANDT as BSAID_MANDT, B07D_BSAID_BELNR as BSAID_BELNR, B07D_BSAID_GJAHR as BSAID_GJAHR, B07D_BSAID_BUKRS as BSAID_BUKRS, B07D_BSAID_BLART as BSAID_BLART 
+						INTO B14_01_TT_BSAID_CLR_DOC FROM B07_04_IT_FIN_AR_INV_PAY_FLAGS 
+	EXEC SP_CREATE_INDEX 'BSAID_MANDT, BSAID_BELNR, BSAID_GJAHR, BSAID_BUKRS, BSAID_BLART', 'B14_01_TT_BSAID_CLR_DOC'
+
+	EXEC SP_DROPTABLE 'B14_02_TT_T052U'
+	SELECT * INTO B14_02_TT_T052U FROM B00_T052U
+	EXEC SP_CREATE_INDEX 'T052U_MANDT, T052U_ZTERM', 'B14_02_TT_T052U'
+
+	EXEC SP_DROPTABLE 'B14_03_TT_T003T'
+	SELECT * INTO B14_03_TT_T003T FROM B00_T003T WHERE T003T_SPRAS = @language1
+	EXEC SP_CREATE_INDEX 'T003T_MANDT, T003T_BLART', 'B14_03_TT_T003T'
+
+	--EXEC SP_CREATE_INDEX 'B04_11_IT_FIN_GL', 'B04_ZF_ENTRY_TYPE_IDX', 'B04_ZF_ENTRY_TYPE'
+	EXEC SP_DROPTABLE 'B14_04_TT_FIN_MJE'
+	SELECT DISTINCT B04_BKPF_MANDT, B04_BSEG_BUKRS, B04_BSEG_GJAHR, B04_BSEG_BELNR, B04_BSEG_BUZEI 
+			INTO B14_04_TT_FIN_MJE FROM B04_11_IT_FIN_GL WHERE B04_ZF_ENTRY_TYPE = 'Manual'
+	EXEC SP_CREATE_INDEX 'B04_BKPF_MANDT, B04_BSEG_BUKRS, B04_BSEG_GJAHR, B04_BSEG_BELNR, B04_BSEG_BUZEI', 'B14_04_TT_FIN_MJE'
+
+	EXEC SP_DROPTABLE 'B14_04_TT_FIN_MJE_HEADER'
+	SELECT DISTINCT B04_BKPF_MANDT, B04_BSEG_BUKRS, B04_BSEG_GJAHR, B04_BSEG_BELNR 
+			INTO B14_04_TT_FIN_MJE_HEADER FROM B14_04_TT_FIN_MJE
+	EXEC SP_CREATE_INDEX 'B04_BKPF_MANDT, B04_BSEG_BUKRS, B04_BSEG_GJAHR, B04_BSEG_BELNR', 'B14_04_TT_FIN_MJE_HEADER'
+
+	EXEC sp_DROPTABLE 'B14_06_IT_ARE'
+
+	--Enter main select statements below
+	SELECT
+	 @id	AS System
+	  ,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_MANDT				--																						AS Mandant
+	  ,AM_Scope.SCOPE_BUSINESS_DMN_L1			--																				AS M_Business domain_L1
+	  ,AM_Scope.SCOPE_BUSINESS_DMN_L2						--																	AS M_Business domain_L2
+	  ,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_GSBER					--																						AS Business area
+	  ,A_TGSBT.TGSBT_GTEXT										--																		AS Business area text
+      ,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BUKRS							--																			AS Company code
+	  ,A_T001.T001_BUTXT										--															AS Company name
+	  ,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_GJAHR							--																			AS Fiscal year
+	  ,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BUDAT							--																			AS Posting date
+	  ,B07D_BSAID_MONAT
+	  ,CAST(YEAR(B07D_BSAID_GJAHR) AS VARCHAR (4)) + '-' +
+	  CASE 
+           WHEN B07D_BSAID_MONAT IN ('01','02','03') THEN 'Q1'
+			WHEN B07D_BSAID_MONAT IN ('04','05','06') THEN 'Q2'
+			WHEN B07D_BSAID_MONAT IN ('07','08','09') THEN 'Q3'
+			WHEN B07D_BSAID_MONAT IN ('10','11','12') THEN 'Q4'
+			ELSE 'unable to classify'
+		END ZF_GJAHR_BUDAT_FQ
+
+	  	,
+	    CASE 
+			WHEN B07D_BSAID_MONAT IN ('01','02','03') THEN 'Q1'
+			WHEN B07D_BSAID_MONAT IN ('04','05','06') THEN 'Q2'
+			WHEN B07D_BSAID_MONAT IN ('07','08','09') THEN 'Q3'
+			WHEN B07D_BSAID_MONAT IN ('10','11','12') THEN 'Q4'
+			ELSE 'unable to classify'
+		END ZF_BSAID_MONAT_FQ
+	  ,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_GJAHR + '-' + B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_MONAT AS ZF_GJAHR_MONAT --																			AS Z_Posting period
+	  ,CONVERT(nvarchar(4), DATEPART(yyyy,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BUDAT)) + '-' + LEFT(DATENAME(mm,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BUDAT),3) ZF_BSAID_BUDAT_CYM --					AS Z_Calendar year-month
+	  ,DATEADD(DAY,1,EOMONTH(B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BUDAT, -1)) ZF_BSAID_BUDAT_1ST_DAY_MNTH		--																	AS Z_Calendar year-first of month	
+	  ,CASE 																													
+			WHEN B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BUDAT >= @date1 AND B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BUDAT <= @date2 THEN 'X' 										
+			ELSE '' 																											
+	  END ZF_BSAID_BUDAT_POSTED_IN_PERIOD --																														AS Z_Posted in period 
+	  ,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BLDAT		--																								AS Document date
+	  ,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BELNR			--																							AS Document nr
+      ,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BUZEI				--																						AS Line item nr
+	  ,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_KUNNR					--																					AS Customer nr
+	  ,B13_05_IT_CMD.B13_KNA1_NAME1 AS KNA1_NAME1
+      ,B13_05_IT_CMD.B13_KNA1_LAND1 AS KNA1_LAND1
+	  ,B13_05_IT_CMD.B13_KNA1_KTOKD AS KNA1_KTOKD
+	  ,AM_T077X.T077X_TXT30
+	  ,B13_05_IT_CMD.B13_KNA1_VBUND AS KNA1_VBUND
+	  ,B13_05_IT_CMD.B13_T880_NAME1 AS T880_NAME1
+	  ,AM_T077X.INTERCO_TXT
+	  ,B13_05_IT_CMD.B13_KNA1_KONZS AS KNA1_KONZS	--GROUP KEY																																															
+	  ,B13_05_IT_CMD.B13_ZF_KNKK_CTLPC_RISK_CAT AS ZF_KNKK_CTLPC_RISK_CAT
+      ,B13_05_IT_CMD.B13_ZF_KNKK_CTLPC_RISK_CAT_TXT AS ZF_KNKK_CTLPC_RISK_CAT_TXT
+	  ,B13_05_IT_CMD.B13_KNA1_BRAN1 as KNA1_BRAN1
+	  ,B13_05_IT_CMD.B13_KNA1_BRAN2 as KNA1_BRAN2
+	  ,B13_05_IT_CMD.B13_KNA1_BRAN3 as KNA1_BRAN3
+	  ,B13_05_IT_CMD.B13_KNA1_BRAN4 as KNA1_BRAN4
+	  ,B13_05_IT_CMD.B13_KNA1_BRAN5 as KNA1_BRAN5																																						
+	  ,B13_05_IT_CMD.B13_ZF_STRATEGIC_ACC AS ZF_STRATEGIC_ACC																						
+	  ,B13_05_IT_CMD.B13_ZF_STRATEGIC_ACC_TEXT AS ZF_STRATEGIC_ACC_TEXT																						
+	  ,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BLART --																										AS Document type
+	  ,B00_T003T.T003T_LTEXT				--																							AS Document type text
+	  ,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BSCHL		--																								AS Posting key
+	  ,COALESCE(TBSLT_LTEXT, '') AS TBSLT_LTEXT				--																			AS Posting key text
+	  ,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_ZF_BSAID_SHKZG_DESC					--																						
+	  ,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_XNEGP					--																					AS Negative posting
+	--   ,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_ZF_DEBIT_ACCOUNTS
+	--   ,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_ZF_CREDIT_ACCOUNTS
+	--   ,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_ZF_DEBIT_ACCOUNT_TEXTS
+	--   ,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_ZF_CREDIT_ACCOUNT_TEXTS
+	  ,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_WAERS,						--																				AS Currency (doc)
+	  B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_ZF_CREDIT_SKAT_TXT20_LIST,
+      B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_ZF_DEBIT_SKAT_TXT20_LIST,
+      B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_ZF_DEBIT_HKONT_LIST,
+      B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_ZF_CREDIT_HKONT_LIST
+	 ,CONVERT(money,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_WRBTR * ISNULL(TCURX_DOC.TCURX_FACTOR, 1) * B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_ZF_BSAID_SHKZG_INTEGER) ZF_BSAID_WRBTR_DOC --								AS Value (doc)
+	  ,A_T001.T001_WAERS --																											AS Currency (cc)
+	  ,CONVERT(money,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_DMBTR * ISNULL(TCURX_CC.TCURX_FACTOR,1) * B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_ZF_BSAID_SHKZG_INTEGER) ZF_BSAID_DMBTR_COC --									AS Value (cc)	
+	  ,@currency GLOBALS_CURRENCY							--																					AS Z_Currency (custom)	
+	  ,CONVERT(money,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_DMBTR * ISNULL(TCURX_CC.TCURX_FACTOR,1) * B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_ZF_BSAID_SHKZG_INTEGER * COALESCE(CAST(TCURR_CUC.TCURR_UKURS AS FLOAT),1) * COALESCE(TCURF_CUC.TCURF_TFACT,1) / COALESCE(TCURF_CUC.TCURF_FFACT,1))	AS ZF_BSAID_DMBTR_CUC --	AS Z_Value (custom)
+	  ,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_ZUONR				--																						AS Assignment  
+	  ,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_SGTXT				--																						AS Document text
+	  ,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_HKONT				--																						AS G/L account
+	  ,COALESCE(SKAT_TXT50, '') AS SKAT_TXT50						--																		AS G/L account text
+	  ,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_ZTERM				--																						AS Payment term
+	  ,COALESCE(B14_02_TT_T052U.T052U_TEXT1, '') AS T052U_TEXT1 --																							AS Payment term text
+	  ,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_ZLSCH AS BSAID_ZLSCH --																										AS Payment method
+	  ,COALESCE(T042Z_TEXT1, '') AS T042Z_TEXT1 --																							AS Payment method text
+	  ,ISNULL(VBRK_ZTERM,'') AS VBRK_ZTERM -- 																								AS SD payment term
+	  ,COALESCE(T052U_SD.T052U_TEXT1,'') AS T052U_SD_T052U_TEXT1 --																							AS SD payment term text
+	  ,B13_05_IT_CMD.B13_KNB1_ZTERM AS KNB1_ZTERM																					
+	  ,COALESCE(T052U_CU.T052U_TEXT1, '') AS T052U_CU_T052U_TEXT1 --																						AS CMD payment term text
+	  ,CASE  																													
+			WHEN ISNULL(B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_ZTERM, '') <> '' THEN B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_ZTERM 													
+			WHEN ISNULL(A_VBRK.VBRK_ZTERM,'') <> '' THEN A_VBRK.VBRK_ZTERM 																
+			ELSE B13_05_IT_CMD.B13_KNB1_ZTERM 																						
+	   END AS ZF_BSAID_VBRK_USED_PMNT_TERM --																														AS Z_Used payment term
+	  ,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_ZFBDT			--																				AS Baseline date
+      ,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_ZBD1T				--																					AS Due days 1
+      ,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_ZBD2T					--																			AS Due days 2
+      ,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_ZBD3T						--																		AS Due days 3
+	  
+	  ,DATEADD(d,																												
+			-- Determine number of days to add, based on hierarchy of days 3, days 2, days 1									
+			-- Handle case where non-invoice related credit in AR has immediate due date										
+			CASE 																												
+				WHEN B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_SHKZG = 'H' AND ISNULL(B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_REBZG,'') = '' THEN 0										
+				WHEN B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_ZBD3T <> 0 THEN B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_ZBD3T															
+				WHEN B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_ZBD2T <> 0 THEN B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_ZBD2T															
+				ELSE B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_ZBD1T																							
+			END,																												
+			-- Determine whether to use baseline date or document date as startign point										
+			CASE WHEN ISNULL(B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_ZFBDT,'') = '' 
+				THEN B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BLDAT 
+				ELSE B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_ZFBDT END) AS ZF_BLDAT_ZFBDT_DUE_DATE --				AS Z_Calculated due date
+
+
+
+	  -- Difference between entry date and document date																		
+	  ,DATEDIFF(d,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_CPUDT,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BLDAT) AS ZF_BSAID_CPUDT_MINUS_BLDAT --																		AS Z_Days - entry date to document date
+	  -- Difference between entry date and posting date																			
+	  ,DATEDIFF(d,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_CPUDT,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BUDAT) AS ZF_BSAID_CPUDT_MINUS_BUDAT --																		AS Z_Days - entry date to posting date
+	  -- Difference between entry date and baseline date																		
+	  ,DATEDIFF(d,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_CPUDT,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_ZFBDT) AS ZF_BSAID_CPUDT_MINUS_ZFBDT --																		AS Z_Days - entry date to baseline date																
+	  -- Difference between doc date and posting date																			
+	  ,DATEDIFF(d,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BLDAT,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BUDAT) AS ZF_BSAID_BLDAT_MINUS_BUDAT --																	AS Z_Days - document date to posting date
+	  -- Difference between doc date and baseline date																			
+	  ,DATEDIFF(d,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BLDAT,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_ZFBDT) AS ZF_BSAID_BLDAT_MINUS_ZFBDT --																		AS Z_Days - document date to baseline date
+	  -- Difference between doc date and Z_calculated due date																		
+	  ,DATEDIFF(d,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BLDAT, 																							
+			-- calculated due date																									
+			DATEADD(d, 																											
+			CASE 																												
+				WHEN B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_SHKZG = 'H' AND ISNULL(B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_REBZG,'') = '' THEN 0										
+				WHEN B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_ZBD3T <> 0 THEN B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_ZBD3T															
+				WHEN B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_ZBD2T <> 0 THEN B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_ZBD2T															
+				ELSE B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_ZBD1T																							
+			END,																												
+			CASE
+				WHEN ISNULL(B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_ZFBDT,'') = '' THEN B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BLDAT
+				ELSE B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_ZFBDT END)) AS ZF_BLDAT_ZFBDT_DOC_DATE_TO_CAL_DATE --					AS Z_Days - document date to calculated due date
+	  -- Difference between doc date and clearing date																			
+	  ,DATEDIFF(d,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BLDAT, 
+		CASE
+			WHEN ISNULL(B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_AUGBL, '') = '' THEN NULL 
+			ELSE B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_AUGDT END) AS ZF_AUGBL_AUGDT_DOC_DATE_TO_CLEARING_DATE --AS Z_Days - document date to clearing date
+	  -- Difference between posting date and baseline date																		
+	  ,DATEDIFF(d,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BUDAT,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_ZFBDT) AS ZF_BUDAT_ZFBDT_POST_DATE_TO_BASELINE_DATE	--																	AS Z_Days - posting date to baseline date
+	  -- Difference between posting date and calculated due date																		
+	  ,DATEDIFF(d,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BUDAT, 																							
+			-- calculated due date																									
+			DATEADD(d, 																											
+			CASE 																												
+				WHEN B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_SHKZG = 'H' AND ISNULL(B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_REBZG,'') = '' THEN 0										
+				WHEN B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_ZBD3T <> 0 THEN B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_ZBD3T															
+				WHEN B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_ZBD2T <> 0 THEN B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_ZBD2T															
+				ELSE B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_ZBD1T																							
+			END,																												
+			CASE 
+				WHEN ISNULL(B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_ZFBDT,'') = '' THEN B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BLDAT
+				ELSE B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_ZFBDT END)) AS ZF_BLDAT_ZFBDT_POST_DATE_TO_CAL_DATE --					AS Z_Days - posting date to calculated due date
+	  -- Difference between posting date and clearing date																		
+	  ,DATEDIFF(d,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BUDAT, 
+		CASE
+			WHEN ISNULL(B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_AUGBL, '') = '' THEN NULL 
+			ELSE B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_AUGDT END) AS ZF_AUGBL_AUGDT_POST_DATE_TO_CLEAR_DATE --		AS Z_Days - posting date to clearing date
+	  -- Difference between baseline date and calculated due date																		
+	  ,DATEDIFF(d,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_ZFBDT, 																							
+			-- calculated due date																									
+			DATEADD(d, 																											
+			CASE 																												
+				WHEN B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_SHKZG = 'H' AND ISNULL(B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_REBZG,'') = '' THEN 0										
+				WHEN B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_ZBD3T <> 0 THEN B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_ZBD3T															
+				WHEN B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_ZBD2T <> 0 THEN B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_ZBD2T															
+				ELSE B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_ZBD1T																							
+			END,																												
+			CASE 
+				WHEN ISNULL(B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_ZFBDT,'') = '' THEN B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BLDAT
+				ELSE B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_ZFBDT END)) AS ZF_BLDAT_ZFBDT_BASELINE_DATE_TO_CAL_DATE --					AS Z_Days - baseline date to calculated due date
+	  -- Difference between  calculated due date and clearing date																	
+	  ,DATEDIFF(d,																												
+			-- calculated due date																									
+			DATEADD(d, 																											
+			CASE 																												
+				WHEN B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_SHKZG = 'H' AND ISNULL(B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_REBZG,'') = '' THEN 0										
+				WHEN B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_ZBD3T <> 0 THEN B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_ZBD3T															
+				WHEN B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_ZBD2T <> 0 THEN B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_ZBD2T															
+				ELSE B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_ZBD1T																							
+			END,																												
+			CASE
+				WHEN ISNULL(B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_ZFBDT,'') = '' THEN B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BLDAT
+				ELSE B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_ZFBDT END),					
+			-- Clearing date																									
+				CASE WHEN ISNULL(B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_AUGBL, '') = '' THEN NULL 
+				ELSE B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_AUGDT END) AS ZF_AUGBL_AUGDT_CAL_DATE_TO_CLEAR_DATE	--							AS Z_Days - calculated due date to clearing date
+	  ,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_ZBD1P	--																									AS Due discount 1
+      ,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_ZBD2P	--																									AS Due discount 2
+	  ,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_ZF_BSAID_WSKTO_ACTUAL_DISCOUNT
+	  ,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_AUGBL	--																									AS Clearing document nr
+	  ,B14_01_TT_BSAID_CLR_DOC.BSAID_BLART AS ZF_BSAID_BLART_CLEARING_DOC_TYPE--																											AS Clearing document type
+	  ,COALESCE(B14_03_TT_T003T.T003T_LTEXT, '') AS CLR_T003T_LTEXT			--																				AS Clearing document type text
+	  ,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_AUGGJ --																										AS Clearing fiscal year
+	  ,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_AUGDT	--																									AS Clearing date
+	  ,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_PRCTR
+	  ,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_KOSTL
+	--   ,CAST(YEAR(B07D_BSAID_AUGGJ) + ISNULL(B00_T009B_AUGDT.T009B_RELJR, 0) AS VARCHAR (4)) + '-' +
+	--   CASE 
+	-- 		WHEN B00_T009B_AUGDT.T009B_POPER IN ('1','2','3') THEN 'Q1'
+	-- 		WHEN B00_T009B_AUGDT.T009B_POPER IN ('4','5','6') THEN 'Q2'
+	-- 		WHEN B00_T009B_AUGDT.T009B_POPER IN ('7','8','9') THEN 'Q3'
+	-- 		WHEN B00_T009B_AUGDT.T009B_POPER IN ('10','11','12') THEN 'Q4'
+	-- 		WHEN DBO.ADD_LEADING_ZEROES(MONTH(B07D_BSAID_AUGDT)) IN ('01', '02', '03') THEN 'Q1'
+	-- 		WHEN DBO.ADD_LEADING_ZEROES(MONTH(B07D_BSAID_AUGDT)) IN ('04', '05', '06') THEN 'Q2'
+	-- 		WHEN DBO.ADD_LEADING_ZEROES(MONTH(B07D_BSAID_AUGDT)) IN ('07', '08', '09') THEN 'Q3'
+	-- 		WHEN DBO.ADD_LEADING_ZEROES(MONTH(B07D_BSAID_AUGDT)) IN ('10', '11', '12') THEN 'Q4'
+	-- 		ELSE 'unable to classify'
+	-- 	END ZF_AUGGJ_AUGDT_CLR_FYQ
+	--   ,CASE 																												
+	-- 		WHEN B00_T009B_AUGDT.T009B_PERIV IS NULL THEN CAST(B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_ZF_BSAID_AUGDT_CLR_PER_YR	 AS NVARCHAR(1000))
+    --         ELSE B00_T009B_AUGDT.T009B_PERIV																						
+	--    END AS ZF_CLR_FP	--																													AS Z_Clearing fiscal year-period
+	  ,CONVERT(nvarchar(4), DATEPART(yyyy,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_AUGDT)) + '-' + left(DATENAME(mm,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_AUGDT),3) AS BSAID_AUGDT_CLR_CALENDAR_YM --					AS Z_Clearing calendar year-month
+	  ,DATEADD(DAY,1,EOMONTH(B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_AUGDT,-1)) AS ZF_BSAID_AUGDT_CY_1ST_OF_MNTH --																			AS ZF_BSAID_AUGDT_CY_1ST_OF_MNTH
+	  ,CASE 																													
+			WHEN B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_AUGDT >= @date1 AND B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_AUGDT <= @date2 THEN 'X'												
+			ELSE ''																													
+	  END AS ZF_BSAID_AUGDT_CLR_IN_PER --                         																								AS Z_Cleared in period	
+	  ,A_BKPF.BKPF_STBLG --																											AS Reversal document nr		
+	  ,A_BKPF.BKPF_BKTXT
+	  ,A_BKPF.BKPF_STJAH --																											AS Reversal document year		
+	  ,CASE 																														
+	  	WHEN ISNULL(A_BKPF.BKPF_STBLG,'') <> '' THEN 'X'																			
+	  	ELSE '' 																												
+	   END AS ZF_BKPF_STBLG_REVERSED --																														AS Z_Reversed
+	  ,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_VBELN						--																				AS Billing document nr
+	  ,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_XBLNR					--																					AS Reference document nr
+	  ,A_BKPF.BKPF_GLVOR						--																					AS Business transaction
+	  ,COALESCE(A_T022T.T022T_TXT, '') AS T022T_TXT					--																			AS Business transaction text
+	  ,A_BKPF.BKPF_TCODE				--																							AS Transaction code
+	  ,COALESCE(B00_TSTCT.TSTCT_TTEXT, '') AS TSTCT_TTEXT --																						AS Transaction code text
+	  ,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BSTAT AS BSAID_BSTAT--																										AS Document status
+	  ,COALESCE(A_DD07T.DD07T_DDTEXT, '') AS DD07T_DDTEXT--																							AS Document status text
+	  --Adding flag to determine whether the entry regular (automatic) or manual 													
+	  ,CASE 																														
+	  	WHEN B14_04_TT_FIN_MJE.B04_BKPF_MANDT IS NULL THEN 																						
+	  		CASE																												
+	  			WHEN B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BUDAT BETWEEN @date1 AND @date2 THEN 'Regular' 												
+	  			ELSE 'Undetermined'																								
+	  		END																													
+	  	ELSE 'Manual' 																											
+	  END AS ZF_ENTRY_TYPE
+	  --Adding flag to determine whether the clearing entry regular (automatic) or manual 										
+	  ,CASE 																														
+	  	WHEN MJEcl.B04_BKPF_MANDT IS NULL THEN 																					
+	  		CASE																												
+	  			WHEN B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BUDAT BETWEEN @date1 AND @date2 THEN 'Regular' 												
+	  			ELSE 'Undetermined'																								
+	  		END																													
+	  	ELSE 'Manual' 																											
+	   END as ZF_CLEARNING_ENTRY_TYPE --																														AS Z_Clearing entry type
+	   ,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_CPUDT						--																				AS Entry date 
+	  ,A_BKPF.BKPF_CPUTM								--																			AS Entry time	
+	  ,A_BKPF.BKPF_USNAM							--																				AS User				
+	  ,A_V_USERNAME.V_USERNAME_NAME_TEXT			--																						AS User name
+	  ,B00_USR02.USR02_USTYP						--																					AS User type
+	  --,B00_USR02.[User type text	]																								AS User type text
+
+	  -- SIMPLE and SOLA LC consolidation currency
+	  ,A_BKPF.BKPF_HWAER
+	  ,A_BKPF.BKPF_AWTYP
+	  ,A_BKPF.BKPF_AWKEY
+	  ,A_BKPF.BKPF_HWAE2
+	  ,A_BKPF.BKPF_HWAE3
+	  ,A_T074T.T074T_LTEXT
+	  ,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_DMBTR * B07D_ZF_BSAID_SHKZG_INTEGER BSAID_DMBTR
+	  ,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_DMBE2 * B07D_ZF_BSAID_SHKZG_INTEGER BSAID_DMBE2
+	  ,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_DMBE3 * B07D_ZF_BSAID_SHKZG_INTEGER BSAID_DMBE3
+	  --applying Standard as label for Normal ledger, for special ledger, it is already specified with specific categories
+	  ,IIF(ISNULL(B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_UMSKZ, '') = '', 'Standard', B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_UMSKZ) BSAID_UMSKZ
+	  ,CASE 
+			WHEN B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BUKRS = 'SSN' THEN COALESCE(A_BKPF.BKPF_HWAER, @currency)	 
+			WHEN B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BUKRS = 'SI'  THEN COALESCE(A_BKPF.BKPF_HWAE2, @currency) 
+			ELSE COALESCE(A_BKPF.BKPF_HWAE3, @currency)	
+		END	AS ZF_CUC
+		--,CASE 
+		--	WHEN B07_04_IT_FIN_AR_INV_PAY_FLAGS.BSAID_BUKRS = 'SSN' THEN CONVERT(money, B07_04_IT_FIN_AR_INV_PAY_FLAGS.BSAID_DMBTR * ISNULL(TCURX_CUS.TCURX_FACTOR,1) 
+		--		* CASE WHEN B07_04_IT_FIN_AR_INV_PAY_FLAGS.ZF_BSAID_SHKZG_DESC = 'Debit' THEN 1 ELSE -1 END)
+			
+		--	WHEN B07_04_IT_FIN_AR_INV_PAY_FLAGS.BSAID_BUKRS = 'SI'  THEN CONVERT(money, B07_04_IT_FIN_AR_INV_PAY_FLAGS.BSAID_DMBE2 * ISNULL(TCURX_CUS.TCURX_FACTOR,1)
+		--		* CASE WHEN B07_04_IT_FIN_AR_INV_PAY_FLAGS.ZF_BSAID_SHKZG_DESC = 'Debit' THEN 1 ELSE -1 END)
+			
+		--	ELSE CONVERT(money, B07_04_IT_FIN_AR_INV_PAY_FLAGS.BSAID_DMBE3 * ISNULL(TCURX_CUS.TCURX_FACTOR,1) 
+		--		* CASE WHEN B07_04_IT_FIN_AR_INV_PAY_FLAGS.ZF_BSAID_SHKZG_DESC = 'Debit' THEN 1 ELSE -1 END)
+		--END AS ZF_BSAID_DMBTR_CUC
+	
+	,
+	BKPF_CPUTM AS BSAID_CPUTM,
+    B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_ZF_AR_DOC_TYPE_BUCKET AS ZF_AR_DOC_TYPE_BUCKET
+	INTO B14_06_IT_ARE
+	
+	FROM B07_04_IT_FIN_AR_INV_PAY_FLAGS
+	
+	INNER JOIN AM_Scope 
+	ON  
+		(B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BUKRS = AM_Scope.SCOPE_CMPNY_CODE)
+	
+	--LEFT JOIN B07_05_IT_FIN_AR_INV_PAY_FLAGS
+	--	ON B07_04_IT_FIN_AR_INV_PAY_FLAGS.BSAID_BUKRS = B07_05_IT_FIN_AR_INV_PAY_FLAGS.B07C_BSAID_BUKRS
+	--	AND B07_04_IT_FIN_AR_INV_PAY_FLAGS.BSAID_BSCHL = B07_05_IT_FIN_AR_INV_PAY_FLAGS.B07C_BSAID_BSCHL
+	--	AND B07_04_IT_FIN_AR_INV_PAY_FLAGS.BSAID_BLART = B07_05_IT_FIN_AR_INV_PAY_FLAGS.B07C_BSAID_BLART
+		
+	LEFT JOIN A_BKPF
+	ON  (B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BUKRS = A_BKPF.BKPF_BUKRS) AND    
+		(B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_GJAHR = A_BKPF.BKPF_GJAHR) AND 
+		(B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BELNR = A_BKPF.BKPF_BELNR)  
+		
+	LEFT JOIN A_T001
+    ON  (B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BUKRS = A_T001.T001_BUKRS)
+
+	--Add document type texts
+	LEFT JOIN B00_T003T
+    ON  (B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BLART = B00_T003T.T003T_BLART)
+		
+	--Includes posting key descriptions
+	LEFT JOIN B00_TBSLT
+    ON  (B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_UMSKZ = B00_TBSLT.TBSLT_UMSKZ) AND 
+        (B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BSCHL = B00_TBSLT.TBSLT_BSCHL) 
+
+		-- Add currency factor from company currency to USD
+
+	LEFT JOIN B00_IT_TCURF TCURF_CUC
+	ON A_T001.T001_WAERS = TCURF_CUC.TCURF_FCURR
+	AND TCURF_CUC.TCURF_TCURR  = @currency  
+	AND TCURF_CUC.TCURF_GDATU = (
+		SELECT TOP 1 B00_IT_TCURF.TCURF_GDATU
+		FROM B00_IT_TCURF
+		WHERE A_T001.T001_WAERS = B00_IT_TCURF.TCURF_FCURR AND 
+				B00_IT_TCURF.TCURF_TCURR  = @currency  AND
+				B00_IT_TCURF.TCURF_GDATU <= B07D_BSAID_BUDAT
+		ORDER BY B00_IT_TCURF.TCURF_GDATU DESC
+		)
+	-- Add exchange rate from company currency to USD
+	LEFT JOIN B00_IT_TCURR TCURR_CUC
+		ON A_T001.T001_WAERS = TCURR_CUC.TCURR_FCURR
+		AND TCURR_CUC.TCURR_TCURR  = @currency  
+		AND TCURR_CUC.TCURR_GDATU = (
+			SELECT TOP 1 B00_IT_TCURR.TCURR_GDATU
+			FROM B00_IT_TCURR
+			WHERE A_T001.T001_WAERS = B00_IT_TCURR.TCURR_FCURR AND 
+					B00_IT_TCURR.TCURR_TCURR  = @currency  AND
+					B00_IT_TCURR.TCURR_GDATU <= B07D_BSAID_BUDAT
+			ORDER BY B00_IT_TCURR.TCURR_GDATU DESC
+			) 
+  
+	-- Get currency conversion factors for document currency
+	LEFT JOIN B00_TCURX TCURX_DOC
+    ON (B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_WAERS = TCURX_DOC.TCURX_CURRKEY)
+  
+	-- Get currency conversion factors for company code currency
+	LEFT JOIN B00_TCURX TCURX_CC
+    ON (A_T001.T001_WAERS = TCURX_CC.TCURX_CURRKEY)
+	
+	LEFT JOIN B00_TCURX TCURX_CUS
+	ON  TCURX_CUS.TCURX_CURRKEY = COALESCE(A_BKPF.BKPF_HWAE3, @currency)
+	-- Add G/L account texts
+	LEFT JOIN B00_SKAT 
+    ON  (A_T001.T001_KTOPL = B00_SKAT.SKAT_KTOPL) AND
+        (B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_HKONT = B00_SKAT.SKAT_SAKNR)
+
+	--Include payment term text
+	LEFT JOIN B14_02_TT_T052U
+	ON (B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_ZTERM = B14_02_TT_T052U.T052U_ZTERM)
+
+	-- Include entry user name text   
+	LEFT JOIN A_V_USERNAME
+    ON  (A_BKPF.BKPF_USNAM = A_V_USERNAME.V_USERNAME_BNAME) 
+		 
+	--Get entry user information
+	LEFT JOIN B00_USR02 
+    ON  (A_BKPF.BKPF_USNAM = B00_USR02.USR02_BNAME)
+
+	-- --Include Sony's fiscal year periods     
+	-- LEFT JOIN B00_T009B B00_T009B_AUGDT
+	-- ON (A_T001.T001_PERIV = B00_T009B_AUGDT.T009B_PERIV) AND
+	--    MONTH(B07D_BSAID_AUGDT) = B00_T009B_AUGDT.T009B_BUMON
+
+	--Include Sony's fiscal year periods     
+	--LEFT JOIN B00_T009B
+	--	ON A_T001.T001_PERIV = T009B_PERIV AND
+	--	(B07D_BSAID_GJAHR = T009B_BDATJ OR T009B_BDATJ = '') AND T009B_POPER = 1
+
+	--Includes customer master data information     
+	LEFT JOIN B13_05_IT_CMD
+    ON  (B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BUKRS = B13_05_IT_CMD.B13_KNB1_BUKRS) AND 
+        (B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_KUNNR = B13_05_IT_CMD.B13_KNB1_KUNNR)
+		
+	--Includes payment method text
+	LEFT JOIN A_T042Z
+    ON (B13_05_IT_CMD.B13_T001_LAND1 = A_T042Z.T042Z_LAND1) AND
+	   (B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_ZLSCH = A_T042Z.T042Z_ZLSCH)
+
+	--Get billing document data
+	LEFT JOIN A_VBRK 
+    ON  (CASE WHEN BKPF_AWTYP = 'VBRK' THEN LEFT(BKPF_AWKEY, 10) ELSE '' END = VBRK_VBELN) AND 
+		(B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BUKRS = A_VBRK.VBRK_BUKRS)
+
+	--Includes sd payment term text
+	LEFT JOIN B14_02_TT_T052U T052U_SD
+	ON VBRK_ZTERM = T052U_SD.T052U_ZTERM
+
+	--Includes customer payment term text
+	LEFT JOIN B14_02_TT_T052U T052U_CU
+	ON (B13_05_IT_CMD.B13_KNB1_ZTERM = T052U_CU.T052U_ZTERM)
+
+	--Add business transaction texts
+	LEFT JOIN A_T022T
+    ON (@language1 = T022T_LANGU) AND
+	   (BKPF_GLVOR = T022T_ACTIVITY)
+
+	--Includes transaction codes texts
+	LEFT JOIN B00_TSTCT
+    ON (A_BKPF.BKPF_TCODE = B00_TSTCT.TSTCT_TCODE) AND
+	   (B00_TSTCT.TSTCT_SPRSL = @language1)
+
+	--Includes document status texts	
+	LEFT JOIN A_DD07T 
+	ON  (A_DD07T.DD07T_DDLANGUAGE = @language1) AND
+		(A_DD07T.DD07T_DOMNAME ='BSTAT') AND
+		(B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BSTAT = A_DD07T.DD07T_DOMVALUE_L)
+
+	--Used to decide which entry is manual or regular 	
+	LEFT JOIN B14_04_TT_FIN_MJE
+    ON  (B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BUKRS = B14_04_TT_FIN_MJE.B04_BSEG_BUKRS) AND
+		(B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_GJAHR = B14_04_TT_FIN_MJE.B04_BSEG_GJAHR) AND
+		(B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BELNR = B14_04_TT_FIN_MJE.B04_BSEG_BELNR)	AND
+		(B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BUZEI = B14_04_TT_FIN_MJE.B04_BSEG_BUZEI)
+
+	--Get clearing document information
+	LEFT JOIN B14_01_TT_BSAID_CLR_DOC
+	ON  (B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BUKRS = B14_01_TT_BSAID_CLR_DOC.BSAID_BUKRS) AND
+		(B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_AUGGJ = B14_01_TT_BSAID_CLR_DOC.BSAID_GJAHR) AND
+		(B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_AUGBL = B14_01_TT_BSAID_CLR_DOC.BSAID_BELNR)
+
+	--Add document type texts for clearing documents
+	LEFT JOIN B14_03_TT_T003T
+	ON  (B14_01_TT_BSAID_CLR_DOC.BSAID_BLART = B14_03_TT_T003T.T003T_BLART)
+
+	--Used to decide which entry is manual or regular for clearing documents nr
+	LEFT JOIN B14_04_TT_FIN_MJE_HEADER MJEcl
+		ON  (B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BUKRS = MJEcl.B04_BSEG_BUKRS) 
+		AND (B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_GJAHR = MJEcl.B04_BSEG_GJAHR)
+		AND (B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_AUGBL = MJEcl.B04_BSEG_BELNR)
+
+	-- Business area text
+	LEFT JOIN A_TGSBT
+	ON  B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_GSBER = A_TGSBT.TGSBT_GSBER AND
+		A_TGSBT.TGSBT_SPRAS = @language1
+
+	LEFT JOIN AM_T077X
+	ON AM_T077X.T077X_SPRAS IN ('E', 'EN') AND
+	   AM_T077X.T077X_KTOKD = B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_KNA1_KTOKD
+
+	LEFT JOIN A_T074T
+	ON A_T074T.T074T_SPRAS IN ('E', 'EN') AND
+	   A_T074T.T074T_KOART = 'D' AND
+	   A_T074T.T074T_SHBKZ = B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_UMSKZ
+
+
+	 
+	--Immediately following each cube select statement, copy the following to log the cube creation
+	--Note: make sure to update the two references to cube name in this code
+	INSERT INTO [_DatabaseLogTable] ([Database],[Object],[Object Type],[User],[Date],[Time],[Description],[Table],[Rows])
+	SELECT DB_NAME(),OBJECT_NAME(@@PROCID),'P',SYSTEM_USER,CONVERT(date,GETDATE()),CONVERT(time,GETDATE()),'Cube completed','B14_06_IT_ARE',(SELECT COUNT(*) FROM B14_06_IT_ARE)
+
+-- Create index on cube to improve performance in future joins
+	EXEC SP_CREATE_INDEX 'B07D_BSAID_MANDT, B07D_BSAID_BUKRS, B07D_BSAID_GJAHR, B07D_BSAID_BELNR, B07D_BSAID_BUZEI', 'B14_06_IT_ARE'
+
+-- Creating AR life cycle
+
+-- step 1: Create a temp table with all month ends between @date1 and @date2
+DECLARE		@end_date DATE = (SELECT CAST(@date2 AS date))
+			,@current_snapshot_date date = (SELECT CAST(@date1 AS date))
+			,@start_date date = (SELECT CAST(@date1 AS date))
+			,@snapshot_date date
+			,@eof date
+			,@snapshot_date_ageing1 int
+			,@snapshot_date_ageing date
+			,@SQL_CMD NVARCHAR(MAX)
+
+EXEC dbo.SP_DROPTABLE 'B14_07_TT_AR_BUCKET'
+--SELECT BSAID_BUKRS, BSAID_BLART, BSAID_BSCHL, MIN(ZF_AR_LIFE_CYCLE_BUCKET_TYPE) ZF_AR_LIFE_CYCLE_BUCKET_TYPE
+--INTO B14_07_TT_AR_BUCKET
+--FROM B07_03_RT_FIN_AR_INV_PAY_FLAGS
+--GROUP BY BSAID_BUKRS, BSAID_BLART, BSAID_BSCHL 
+SELECT DISTINCT B07D_BSAID_BUKRS, B07D_BSAID_BLART, B07D_BSAID_BSCHL, B07D_ZF_AR_LIFE_CYCLE_BUCKET_TYPE 
+INTO B14_07_TT_AR_BUCKET
+FROM B07_04_IT_FIN_AR_INV_PAY_FLAGS
+
+EXEC SP_UNNAME_FIELD 'B07D_', 'B14_07_TT_AR_BUCKET'
+
+EXEC sp_DROPTABLE 'B14_08_TT_T4'
+CREATE TABLE [B14_08_TT_T4](
+	[BSAID_MANDT] [nvarchar](50) NULL,
+	[BSAID_BUKRS] [nvarchar](50) NULL,
+	[BSAID_BUDAT] [date] NULL,
+	[BSAID_AUGBL] [nvarchar](50) NULL,
+	[BSAID_KUNNR] [nvarchar](50) NULL,
+	[BSAID_BELNR] [nvarchar](50) NULL,
+	[BSAID_BUZEI] [nvarchar](50) NULL,
+	[BSAID_BLART] [varchar](50) NULL,
+	[BSAID_BSCHL] [nvarchar](50) NULL,
+	[BSAID_AUGDT] [date] NULL,
+	[BSAID_WAERS] [nvarchar](50) NULL,
+	[BSAID_DMBTR] [money] NULL,
+	[ZF_BSAID_DMBTR_CUC] [money] NULL,
+	[ZF_BSAID_SHKZG_INTEGER] [int] NOT NULL)
+
+	EXEC SP_DROPTABLE 'B14_09_TT_BSAID'
+
+	SELECT * INTO B14_09_TT_BSAID FROM B14_08_TT_T4
+
+	ALTER TABLE B14_08_TT_T4
+	ADD ZF_SNAPSHOT_DATE DATE,
+		ZF_SNAPSHOT_DATE_AGEING DATE,
+		ZF_B_OUTSTANDING_AT_SNAPSHOT_DATE VARCHAR(50),
+		ZF_DOCUMENT_TYPE VARCHAR(50),
+		T003T_LTEXT VARCHAR(100),
+		ZF_DOCUMENT_TYPE_DESC VARCHAR(100)
+
+	EXEC SP_DROPTABLE 'B14_10_TT_T4_OUTPUT'
+	SELECT * INTO B14_10_TT_T4_OUTPUT FROM B14_08_TT_T4
+
+	EXEC SP_DROPTABLE 'B14_11_TT_T4_1ST_MONTH'
+	SELECT * INTO B14_11_TT_T4_1ST_MONTH FROM B14_08_TT_T4
+	
+-- Create T4 table
+INSERT INTO B14_08_TT_T4
+	SELECT
+		 B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_MANDT
+		,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BUKRS
+		,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BUDAT
+		,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_AUGBL
+		,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_KUNNR
+		,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BELNR
+		,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BUZEI
+		,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BLART
+		,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BSCHL
+		,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_AUGDT
+		,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_WAERS
+		,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_DMBTR
+		,B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_ZF_BSAID_DMBTR_S_CUC AS ZF_BSAID_DMBTR_CUC	
+		,CASE WHEN B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_SHKZG='H' THEN -1 ELSE 1 END
+		,DATEADD (DD, -1, DATEADD(MM, DATEDIFF(MM, 0, B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BUDAT) + 1, 0))
+		,DATEADD (DD, -1, DATEADD(MM, DATEDIFF(MM, 0, B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BUDAT) + 1, 0))
+		,'', '', '', ''
+	FROM B07_04_IT_FIN_AR_INV_PAY_FLAGS
+		LEFT JOIN dbo.B14_07_TT_AR_BUCKET
+			ON B14_07_TT_AR_BUCKET.BSAID_BUKRS = B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BUKRS
+			AND B14_07_TT_AR_BUCKET.BSAID_BLART = B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BLART
+			AND B14_07_TT_AR_BUCKET.BSAID_BSCHL = B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_BSCHL
+	WHERE B14_07_TT_AR_BUCKET.ZF_AR_LIFE_CYCLE_BUCKET_TYPE = 'B' AND B07_04_IT_FIN_AR_INV_PAY_FLAGS.B07D_BSAID_SHKZG = 'S'
+	
+INSERT INTO B14_09_TT_BSAID
+	SELECT
+		 B07D_BSAID_MANDT as BSAID_MANDT
+		,B07D_BSAID_BUKRS as BSAID_BUKRS
+		,B07D_BSAID_BUDAT as BSAID_BUDAT
+		,B07D_BSAID_AUGBL as BSAID_AUGBL
+		,B07D_BSAID_KUNNR as BSAID_KUNNR
+		,B07D_BSAID_BELNR as BSAID_BELNR
+		,B07D_BSAID_BUZEI as BSAID_BUZEI
+		,B07D_BSAID_BLART as BSAID_BLART
+		,B07D_BSAID_BSCHL as BSAID_BSCHL
+		,B07D_BSAID_AUGDT as BSAID_AUGDT
+		,B07D_BSAID_WAERS as BSAID_WAERS
+		,B07D_BSAID_DMBTR as BSAID_DMBTR
+		,B07D_ZF_BSAID_DMBTR_S_CUC as ZF_BSAID_DMBTR_CUC
+		--,BSAID_DMBE2
+		--,BSAID_DMBE3
+		,CASE WHEN B07D_BSAID_SHKZG='H' THEN -1 ELSE 1 END
+	FROM B07_04_IT_FIN_AR_INV_PAY_FLAGS 
+-- loop through each month in filtered BSAD_BSID data set
+--SET @current_snapshot_date = Cast('04/01/2017' as datetime)
+--SET @end_date = Cast('05/31/2017' as datetime)
+
+WHILE DATEDIFF(mm, @current_snapshot_date, @end_date) > -1
+BEGIN
+DECLARE @err_msg NVARCHAR(100) = 'Processing ' + CAST(@current_snapshot_date AS NVARCHAR(100))
+SET @snapshot_date = DATEADD (DD, -1, DATEADD(MM, DATEDIFF(MM, 0, @current_snapshot_date) + 1, 0))
+SET @current_snapshot_date = DATEADD(MM, 1, @current_snapshot_date)
+	
+	RAISERROR (@err_msg, 0, 1) WITH NOWAIT
+--slide 1
+	EXEC SP_DROPTABLE 'B14_12_TT_T3_BSAID_OUT_BAL'
+	SELECT BSAID_MANDT, 
+			BSAID_BUKRS, 
+			BSAID_AUGBL, 
+	BSAID_AUGDT, 
+	SUM(BSAID_DMBTR * ZF_BSAID_SHKZG_INTEGER) ZF_BSAID_DMBTR_TOT,
+	SUM(ZF_BSAID_DMBTR_CUC * ZF_BSAID_SHKZG_INTEGER) ZF_BSAID_DMBTR_CUC_TOT
+	INTO B14_12_TT_T3_BSAID_OUT_BAL
+	FROM B14_09_TT_BSAID
+	WHERE BSAID_BUDAT <= @SNAPSHOT_DATE
+	GROUP BY BSAID_MANDT, BSAID_BUKRS, BSAID_AUGBL, BSAID_AUGDT 
+	HAVING SUM(BSAID_DMBTR * ZF_BSAID_SHKZG_INTEGER) > 0
+	DELETE B14_11_TT_T4_1ST_MONTH
+
+	INSERT INTO B14_11_TT_T4_1ST_MONTH
+	SELECT 
+		B14_08_TT_T4.BSAID_MANDT
+		,B14_08_TT_T4.BSAID_BUKRS
+		,B14_08_TT_T4.BSAID_BUDAT
+		,B14_08_TT_T4.BSAID_AUGBL
+		,B14_08_TT_T4.BSAID_KUNNR
+		,B14_08_TT_T4.BSAID_BELNR
+		,B14_08_TT_T4.BSAID_BUZEI
+		,B14_08_TT_T4.BSAID_BLART
+		,B14_08_TT_T4.BSAID_BSCHL
+		,B14_08_TT_T4.BSAID_AUGDT
+		,B14_08_TT_T4.BSAID_WAERS
+		,B14_08_TT_T4.BSAID_DMBTR * ZF_BSAID_SHKZG_INTEGER
+		,B14_08_TT_T4.ZF_BSAID_DMBTR_CUC
+		--,B14_08_TT_T4.BSAID_DMBE2 * ZF_BSAID_SHKZG_INTEGER
+		--,B14_08_TT_T4.BSAID_DMBE3 * ZF_BSAID_SHKZG_INTEGER
+		,B14_08_TT_T4.ZF_BSAID_SHKZG_INTEGER
+		,@snapshot_date
+		,@snapshot_date
+		,CASE
+			WHEN ISNULL(B14_08_TT_T4.BSAID_AUGDT, '') = '' THEN 'X'
+			WHEN DATEDIFF(dd, B14_08_TT_T4.BSAID_AUGDT, @snapshot_date) > 0 THEN 'X'
+			WHEN ISNULL(B14_12_TT_T3_BSAID_OUT_BAL.BSAID_BUKRS, '') <> '' THEN 'X'
+			ELSE '' END
+		,IIf(ISNULL(B14_12_TT_T3_BSAID_OUT_BAL.BSAID_BUKRS, '') <> '' AND ISNULL(B14_08_TT_T4.BSAID_AUGDT, '') <> ''
+					AND B14_08_TT_T4.BSAID_AUGDT <= @snapshot_date, 'Outstanding', 'B') 
+		,'', ''
+	FROM B14_08_TT_T4
+		LEFT JOIN B14_12_TT_T3_BSAID_OUT_BAL
+			ON B14_12_TT_T3_BSAID_OUT_BAL.BSAID_BUKRS	= B14_08_TT_T4.BSAID_BUKRS
+				AND B14_12_TT_T3_BSAID_OUT_BAL.BSAID_AUGBL	= B14_08_TT_T4.BSAID_AUGBL
+				AND B14_12_TT_T3_BSAID_OUT_BAL.BSAID_AUGDT	= B14_08_TT_T4.BSAID_AUGDT
+	WHERE B14_08_TT_T4.BSAID_BUDAT <= @snapshot_date
+			AND (ISNULL(B14_08_TT_T4.BSAID_AUGDT, '') = ''
+					OR B14_08_TT_T4.BSAID_AUGDT > @snapshot_date)
+					--OR ISNULL(B14_12_TT_T3_BSAID_OUT_BAL.BSAID_BUKRS, '') <> '')
+				
+	INSERT INTO B14_10_TT_T4_OUTPUT
+		SELECT * FROM B14_11_TT_T4_1ST_MONTH
+		
+	EXEC SP_DROPTABLE 'B14_11_TT_T4_1ST_MONTH_SUM'
+	SELECT BSAID_MANDT,
+			BSAID_BUKRS,
+			BSAID_AUGBL,
+			BSAID_AUGDT, 
+		@snapshot_date ZF_SNAPSHOT_DATE,
+		@snapshot_date ZF_SNAPSHOT_DATE_AGEING,
+		'X' ZF_B_OUTSTANDING_AT_SNAPSHOT_DATE,
+		'B' ZF_DOCUMENT_TYPE,
+		BSAID_WAERS,
+		SUM(BSAID_DMBTR) BSAID_DMBTR,
+		SUM(ZF_BSAID_DMBTR_CUC) ZF_BSAID_DMBTR_CUC
+	INTO B14_11_TT_T4_1ST_MONTH_SUM FROM B14_11_TT_T4_1ST_MONTH
+	GROUP BY BSAID_MANDT, BSAID_BUKRS, BSAID_AUGBL, BSAID_AUGDT, BSAID_WAERS
+
+	SET @snapshot_date_ageing = DATEADD (DD, -1, DATEADD(MM, DATEDIFF(MM, 0, @snapshot_date) + 2, 0))
+	WHILE DATEDIFF(mm, @snapshot_date, @snapshot_date_ageing) <= 6
+			AND DATEDIFF(mm, @snapshot_date_ageing, @end_date) >= 0
+	BEGIN
+		EXEC SP_DROPTABLE 'T14_BSAID_NOT_MTCH_EXT_DATE'
+		SELECT BSAID_MANDT, BSAID_BUKRS, BSAID_AUGBL, BSAID_AUGDT, SUM(BSAID_DMBTR * ZF_BSAID_SHKZG_INTEGER) ZF_BSAID_DMBTR_SIGNED, SUM(ZF_BSAID_DMBTR_CUC * ZF_BSAID_SHKZG_INTEGER) ZF_BSAID_DMBTR_CUC_SIGNED
+		INTO T14_BSAID_NOT_MTCH_EXT_DATE
+		FROM B14_09_TT_BSAID
+		WHERE ISNULL(BSAID_AUGBL, '') = '' AND BSAID_BUDAT <= @snapshot_date_ageing
+		GROUP BY BSAID_MANDT, BSAID_BUKRS, BSAID_AUGBL, BSAID_AUGDT
+		
+		EXEC SP_DROPTABLE 'B14_13_TT_BSAID_SNAPSHOT'
+		SELECT B14_09_TT_BSAID.BSAID_MANDT, 
+			B14_09_TT_BSAID.BSAID_BUKRS, 
+			B14_09_TT_BSAID.BSAID_AUGBL, 
+			B14_09_TT_BSAID.BSAID_AUGDT, 
+			B14_09_TT_BSAID.BSAID_BLART, 
+			B14_09_TT_BSAID.BSAID_BSCHL, 
+			SUM(BSAID_DMBTR * ZF_BSAID_SHKZG_INTEGER) ZF_BSAID_DMBTR_SIGNED, 
+			SUM(ZF_BSAID_DMBTR_CUC * ZF_BSAID_SHKZG_INTEGER) ZF_BSAID_DMBTR_CUC_SIGNED,
+			ZF_AR_LIFE_CYCLE_BUCKET_TYPE
+		INTO B14_13_TT_BSAID_SNAPSHOT
+		FROM B14_09_TT_BSAID
+			LEFT JOIN dbo.B14_07_TT_AR_BUCKET
+					ON B14_07_TT_AR_BUCKET.BSAID_BUKRS = B14_09_TT_BSAID.BSAID_BUKRS
+					AND B14_07_TT_AR_BUCKET.BSAID_BLART = B14_09_TT_BSAID.BSAID_BLART
+					AND B14_07_TT_AR_BUCKET.BSAID_BSCHL = B14_09_TT_BSAID.BSAID_BSCHL
+		WHERE EXISTS (SELECT 1 FROM B14_11_TT_T4_1ST_MONTH_SUM 
+						WHERE B14_09_TT_BSAID.BSAID_BUKRS = B14_11_TT_T4_1ST_MONTH_SUM.BSAID_BUKRS AND
+						B14_09_TT_BSAID.BSAID_AUGBL = B14_11_TT_T4_1ST_MONTH_SUM.BSAID_AUGBL AND
+						B14_09_TT_BSAID.BSAID_AUGDT = B14_11_TT_T4_1ST_MONTH_SUM.BSAID_AUGDT)
+			AND B14_09_TT_BSAID.BSAID_BUDAT <= @snapshot_date_ageing
+		GROUP BY B14_09_TT_BSAID.BSAID_MANDT, B14_09_TT_BSAID.BSAID_BUKRS, B14_09_TT_BSAID.BSAID_AUGBL, B14_09_TT_BSAID.BSAID_AUGDT, B14_09_TT_BSAID.BSAID_BLART, B14_09_TT_BSAID.BSAID_BSCHL, ZF_AR_LIFE_CYCLE_BUCKET_TYPE
+		
+		-- create DZ document type table
+		EXEC SP_DROPTABLE 'B14_14_TT_BSAID_SNAPSHOT_CASH_PAYMENT'
+		SELECT BSAID_MANDT, BSAID_BUKRS, BSAID_AUGBL, BSAID_AUGDT, 
+		SUM(ZF_BSAID_DMBTR_SIGNED) ZF_BSAID_DMBTR_SIGNED, 
+		SUM(ZF_BSAID_DMBTR_CUC_SIGNED) ZF_BSAID_DMBTR_CUC_SIGNED
+		INTO B14_14_TT_BSAID_SNAPSHOT_CASH_PAYMENT
+		FROM B14_13_TT_BSAID_SNAPSHOT
+		WHERE B14_13_TT_BSAID_SNAPSHOT.ZF_AR_LIFE_CYCLE_BUCKET_TYPE = 'D'
+
+		GROUP BY BSAID_MANDT, BSAID_BUKRS, BSAID_AUGBL, BSAID_AUGDT
+
+		-- create Credit note document type table
+		EXEC SP_DROPTABLE 'B14_15_TT_BSAID_SNAPSHOT_CREDIT_NOTE'
+		SELECT BSAID_MANDT, BSAID_BUKRS, BSAID_AUGBL, BSAID_AUGDT, SUM(ZF_BSAID_DMBTR_SIGNED) ZF_BSAID_DMBTR_SIGNED, SUM(ZF_BSAID_DMBTR_CUC_SIGNED) ZF_BSAID_DMBTR_CUC_SIGNED
+		INTO B14_15_TT_BSAID_SNAPSHOT_CREDIT_NOTE
+		FROM B14_13_TT_BSAID_SNAPSHOT
+		WHERE B14_13_TT_BSAID_SNAPSHOT.ZF_AR_LIFE_CYCLE_BUCKET_TYPE = 'E'
+
+		GROUP BY BSAID_MANDT, BSAID_BUKRS, BSAID_AUGBL, BSAID_AUGDT
+
+		-- create Deduction document type table
+		EXEC SP_DROPTABLE 'B14_16_TT_BSAID_SNAPSHOT_DEDUCTION'
+		SELECT BSAID_MANDT, BSAID_BUKRS, BSAID_AUGBL, BSAID_AUGDT, SUM(ZF_BSAID_DMBTR_SIGNED) ZF_BSAID_DMBTR_SIGNED, SUM(ZF_BSAID_DMBTR_CUC_SIGNED) ZF_BSAID_DMBTR_CUC_SIGNED
+		INTO B14_16_TT_BSAID_SNAPSHOT_DEDUCTION
+		FROM B14_13_TT_BSAID_SNAPSHOT
+		WHERE B14_13_TT_BSAID_SNAPSHOT.ZF_AR_LIFE_CYCLE_BUCKET_TYPE = 'F'
+
+		GROUP BY BSAID_MANDT, BSAID_BUKRS, BSAID_AUGBL, BSAID_AUGDT
+
+		-- create Other document type table
+		EXEC SP_DROPTABLE 'B14_17_TT_BSAID_SNAPSHOT_OTH'
+		SELECT BSAID_MANDT, BSAID_BUKRS, BSAID_AUGBL, BSAID_AUGDT, SUM(ZF_BSAID_DMBTR_SIGNED) ZF_BSAID_DMBTR_SIGNED, SUM(ZF_BSAID_DMBTR_CUC_SIGNED) ZF_BSAID_DMBTR_CUC_SIGNED
+		INTO B14_17_TT_BSAID_SNAPSHOT_OTH
+		FROM B14_13_TT_BSAID_SNAPSHOT
+		WHERE B14_13_TT_BSAID_SNAPSHOT.ZF_AR_LIFE_CYCLE_BUCKET_TYPE = 'G'
+
+		GROUP BY BSAID_MANDT, BSAID_BUKRS, BSAID_AUGBL, BSAID_AUGDT
+
+	--slide 3
+		EXEC SP_DROPTABLE 'B14_18_TT_BSAID_INV'
+		SELECT B14_11_TT_T4_1ST_MONTH_SUM.*,
+			ISNULL(B14_14_TT_BSAID_SNAPSHOT_CASH_PAYMENT.ZF_BSAID_DMBTR_SIGNED, 0) B14_14_TT_BSAID_SNAPSHOT_CASH_PAYMENT,
+			ISNULL(B14_14_TT_BSAID_SNAPSHOT_CASH_PAYMENT.ZF_BSAID_DMBTR_CUC_SIGNED, 0) B14_14_TT_BSAID_SNAPSHOT_CASH_PAYMENT_CUC,
+			ISNULL(B14_16_TT_BSAID_SNAPSHOT_DEDUCTION.ZF_BSAID_DMBTR_SIGNED, 0) ZF_BSAID_DMBTR_DEDUCTION,
+			ISNULL(B14_16_TT_BSAID_SNAPSHOT_DEDUCTION.ZF_BSAID_DMBTR_CUC_SIGNED, 0) ZF_BSAID_DMBTR_DEDUCTION_CUC,
+			ISNULL(B14_15_TT_BSAID_SNAPSHOT_CREDIT_NOTE.ZF_BSAID_DMBTR_SIGNED, 0) ZF_BSAID_DMBTR_CREDIT_NOTE,
+			ISNULL(B14_15_TT_BSAID_SNAPSHOT_CREDIT_NOTE.ZF_BSAID_DMBTR_CUC_SIGNED, 0) ZF_BSAID_DMBTR_CREDIT_NOTE_CUC,
+			ISNULL(B14_17_TT_BSAID_SNAPSHOT_OTH.ZF_BSAID_DMBTR_SIGNED, 0) ZF_BSAID_DMBTR_OTH,
+			ISNULL(B14_17_TT_BSAID_SNAPSHOT_OTH.ZF_BSAID_DMBTR_CUC_SIGNED, 0) ZF_BSAID_DMBTR_OTH_CUC,
+			ISNULL(T14_BSAID_NOT_MTCH_EXT_DATE.ZF_BSAID_DMBTR_SIGNED, 0) ZF_BSAID_DMBTR_NOT_MTCH,
+			ISNULL(T14_BSAID_NOT_MTCH_EXT_DATE.ZF_BSAID_DMBTR_CUC_SIGNED, 0) ZF_BSAID_DMBTR_NOT_MTCH_CUC,
+			'DZ' BSAID_BLART_DZ,
+			'DA' BSAID_BLART_DA,
+			'DG' BSAID_BLART_DG,
+			'OTHER' BSAID_BLART_OTH,
+			ISNULL(B14_11_TT_T4_1ST_MONTH_SUM.BSAID_DMBTR, 0) +
+				 + ISNULL(B14_14_TT_BSAID_SNAPSHOT_CASH_PAYMENT.ZF_BSAID_DMBTR_SIGNED, 0)
+				 + ISNULL(B14_15_TT_BSAID_SNAPSHOT_CREDIT_NOTE.ZF_BSAID_DMBTR_SIGNED, 0)
+				 + ISNULL(B14_16_TT_BSAID_SNAPSHOT_DEDUCTION.ZF_BSAID_DMBTR_SIGNED, 0)
+				 + ISNULL(B14_17_TT_BSAID_SNAPSHOT_OTH.ZF_BSAID_DMBTR_SIGNED, 0)
+				 + ISNULL(T14_BSAID_NOT_MTCH_EXT_DATE.ZF_BSAID_DMBTR_SIGNED, 0) ZF_BSAID_DMBTR_OT_AT_SNDTX_MTHX,
+
+
+			ISNULL(B14_11_TT_T4_1ST_MONTH_SUM.ZF_BSAID_DMBTR_CUC, 0) +
+				 + ISNULL(B14_14_TT_BSAID_SNAPSHOT_CASH_PAYMENT.ZF_BSAID_DMBTR_CUC_SIGNED, 0)
+				 + ISNULL(B14_15_TT_BSAID_SNAPSHOT_CREDIT_NOTE.ZF_BSAID_DMBTR_CUC_SIGNED, 0)
+				 + ISNULL(B14_16_TT_BSAID_SNAPSHOT_DEDUCTION.ZF_BSAID_DMBTR_CUC_SIGNED, 0)
+				 + ISNULL(B14_17_TT_BSAID_SNAPSHOT_OTH.ZF_BSAID_DMBTR_CUC_SIGNED, 0)
+				 + ISNULL(T14_BSAID_NOT_MTCH_EXT_DATE.ZF_BSAID_DMBTR_CUC_SIGNED, 0) ZF_BSAID_DMBTR_OT_AT_SNDTX_MTHX_CUC,
+
+
+			0 ZF_C_BUCKET_W_DZ_DG_DA_OTHER,
+			0 ZF_C_BUCKET_W_DZ_DG_DA_OTHER_CUC,
+			0 ZF_BSAID_DMBTR_INV_CASH_PAYMENT_AT_SNDTX_MTHX,
+			0 ZF_BSAID_DMBTR_INV_CREDIT_NOTE_AT_SNDTX_MTHX,
+			0 ZF_BSAID_DMBTR_INV_DEDUCTION_AT_SNDTX_MTHX,
+			0 ZF_BSAID_DMBTR_INV_OTH_AT_SNDTX_MTHX,
+			0 ZF_BSAID_DMBTR_INV_CASH_PAYMENT_AT_SNDTX_MTHX_CUC,
+			0 ZF_BSAID_DMBTR_INV_CREDIT_NOTE_AT_SNDTX_MTHX_CUC,
+			0 ZF_BSAID_DMBTR_INV_DEDUCTION_AT_SNDTX_MTHX_CUC,
+			0 ZF_BSAID_DMBTR_INV_OTH_AT_SNDTX_MTHX_CUC
+
+		INTO B14_18_TT_BSAID_INV
+		FROM B14_11_TT_T4_1ST_MONTH_SUM
+			LEFT JOIN B14_14_TT_BSAID_SNAPSHOT_CASH_PAYMENT
+				ON B14_11_TT_T4_1ST_MONTH_SUM.BSAID_BUKRS = B14_14_TT_BSAID_SNAPSHOT_CASH_PAYMENT.BSAID_BUKRS
+				AND B14_11_TT_T4_1ST_MONTH_SUM.BSAID_AUGBL = B14_14_TT_BSAID_SNAPSHOT_CASH_PAYMENT.BSAID_AUGBL
+				AND B14_11_TT_T4_1ST_MONTH_SUM.BSAID_AUGDT = B14_14_TT_BSAID_SNAPSHOT_CASH_PAYMENT.BSAID_AUGDT
+				AND ISNULL(B14_14_TT_BSAID_SNAPSHOT_CASH_PAYMENT.BSAID_AUGBL, '') <> ''
+			LEFT JOIN B14_15_TT_BSAID_SNAPSHOT_CREDIT_NOTE
+				ON B14_11_TT_T4_1ST_MONTH_SUM.BSAID_BUKRS = B14_15_TT_BSAID_SNAPSHOT_CREDIT_NOTE.BSAID_BUKRS
+				AND B14_11_TT_T4_1ST_MONTH_SUM.BSAID_AUGBL = B14_15_TT_BSAID_SNAPSHOT_CREDIT_NOTE.BSAID_AUGBL
+				AND B14_11_TT_T4_1ST_MONTH_SUM.BSAID_AUGDT = B14_15_TT_BSAID_SNAPSHOT_CREDIT_NOTE.BSAID_AUGDT
+				AND ISNULL(B14_15_TT_BSAID_SNAPSHOT_CREDIT_NOTE.BSAID_AUGBL, '') <> ''
+			LEFT JOIN B14_16_TT_BSAID_SNAPSHOT_DEDUCTION
+				ON B14_11_TT_T4_1ST_MONTH_SUM.BSAID_BUKRS = B14_16_TT_BSAID_SNAPSHOT_DEDUCTION.BSAID_BUKRS
+				AND B14_11_TT_T4_1ST_MONTH_SUM.BSAID_AUGBL = B14_16_TT_BSAID_SNAPSHOT_DEDUCTION.BSAID_AUGBL
+				AND B14_11_TT_T4_1ST_MONTH_SUM.BSAID_AUGDT = B14_16_TT_BSAID_SNAPSHOT_DEDUCTION.BSAID_AUGDT
+				AND ISNULL(B14_16_TT_BSAID_SNAPSHOT_DEDUCTION.BSAID_AUGBL, '') <> ''
+			LEFT JOIN B14_17_TT_BSAID_SNAPSHOT_OTH
+				ON B14_11_TT_T4_1ST_MONTH_SUM.BSAID_BUKRS = B14_17_TT_BSAID_SNAPSHOT_OTH.BSAID_BUKRS
+				AND B14_11_TT_T4_1ST_MONTH_SUM.BSAID_AUGBL = B14_17_TT_BSAID_SNAPSHOT_OTH.BSAID_AUGBL
+				AND B14_11_TT_T4_1ST_MONTH_SUM.BSAID_AUGDT = B14_17_TT_BSAID_SNAPSHOT_OTH.BSAID_AUGDT
+				AND ISNULL(B14_17_TT_BSAID_SNAPSHOT_OTH.BSAID_AUGBL, '') <> ''
+			LEFT JOIN T14_BSAID_NOT_MTCH_EXT_DATE
+				ON B14_11_TT_T4_1ST_MONTH_SUM.BSAID_BUKRS = T14_BSAID_NOT_MTCH_EXT_DATE.BSAID_BUKRS
+				AND B14_11_TT_T4_1ST_MONTH_SUM.BSAID_AUGBL = T14_BSAID_NOT_MTCH_EXT_DATE.BSAID_AUGBL
+				AND B14_11_TT_T4_1ST_MONTH_SUM.BSAID_AUGDT = T14_BSAID_NOT_MTCH_EXT_DATE.BSAID_AUGDT
+				AND ISNULL(T14_BSAID_NOT_MTCH_EXT_DATE.BSAID_AUGBL, '') <> ''
+	
+		ALTER TABLE B14_18_TT_BSAID_INV
+		ALTER COLUMN ZF_C_BUCKET_W_DZ_DG_DA_OTHER FLOAT
+		
+		ALTER TABLE B14_18_TT_BSAID_INV
+		ALTER COLUMN ZF_C_BUCKET_W_DZ_DG_DA_OTHER_CUC FLOAT
+
+		ALTER TABLE B14_18_TT_BSAID_INV
+		ALTER COLUMN ZF_BSAID_DMBTR_INV_CASH_PAYMENT_AT_SNDTX_MTHX FLOAT
+
+		ALTER TABLE B14_18_TT_BSAID_INV
+		ALTER COLUMN ZF_BSAID_DMBTR_INV_CREDIT_NOTE_AT_SNDTX_MTHX FLOAT
+
+		ALTER TABLE B14_18_TT_BSAID_INV
+		ALTER COLUMN ZF_BSAID_DMBTR_INV_DEDUCTION_AT_SNDTX_MTHX FLOAT 
+
+		ALTER TABLE B14_18_TT_BSAID_INV
+		ALTER COLUMN ZF_BSAID_DMBTR_INV_OTH_AT_SNDTX_MTHX FLOAT
+		
+		
+		ALTER TABLE B14_18_TT_BSAID_INV
+		ALTER COLUMN ZF_BSAID_DMBTR_INV_CASH_PAYMENT_AT_SNDTX_MTHX_CUC FLOAT
+
+		ALTER TABLE B14_18_TT_BSAID_INV
+		ALTER COLUMN ZF_BSAID_DMBTR_INV_CREDIT_NOTE_AT_SNDTX_MTHX_CUC FLOAT
+
+		ALTER TABLE B14_18_TT_BSAID_INV
+		ALTER COLUMN ZF_BSAID_DMBTR_INV_DEDUCTION_AT_SNDTX_MTHX_CUC FLOAT 
+
+		ALTER TABLE B14_18_TT_BSAID_INV
+		ALTER COLUMN ZF_BSAID_DMBTR_INV_OTH_AT_SNDTX_MTHX_CUC FLOAT
+		
+		UPDATE B14_18_TT_BSAID_INV
+			SET ZF_BSAID_DMBTR_DEDUCTION = 
+				CASE
+					--exclude Deduction if Opening invoice equals to cash payment 
+					--and deduction pluses credit note pluses other equal zeroes
+					WHEN BSAID_DMBTR + B14_14_TT_BSAID_SNAPSHOT_CASH_PAYMENT = 0
+					AND ISNULL(ZF_BSAID_DMBTR_DEDUCTION,0) + ISNULL(ZF_BSAID_DMBTR_CREDIT_NOTE,0) + ISNULL(ZF_BSAID_DMBTR_OTH,0) = 0 THEN 0
+					--exclude Deduction if cash payment equals to Opening Invoice pluses Credit note pluses Deduction
+					WHEN B14_14_TT_BSAID_SNAPSHOT_CASH_PAYMENT + ZF_BSAID_DMBTR_DEDUCTION + BSAID_DMBTR + ZF_BSAID_DMBTR_CREDIT_NOTE = 0
+						AND (B14_14_TT_BSAID_SNAPSHOT_CASH_PAYMENT <> 0 AND ZF_BSAID_DMBTR_CREDIT_NOTE <> 0) THEN 0
+					ELSE ZF_BSAID_DMBTR_DEDUCTION
+				END,
+				ZF_BSAID_DMBTR_DEDUCTION_CUC = 
+				CASE
+					--exclude Deduction if Opening invoice equals to cash payment 
+					--and deduction pluses credit note pluses other equal zeroes
+					WHEN ZF_BSAID_DMBTR_CUC + B14_14_TT_BSAID_SNAPSHOT_CASH_PAYMENT = 0
+					AND ISNULL(ZF_BSAID_DMBTR_DEDUCTION_CUC,0) + ISNULL(ZF_BSAID_DMBTR_CREDIT_NOTE_CUC,0) + ISNULL(ZF_BSAID_DMBTR_OTH_CUC,0) = 0 THEN 0
+					--exclude Deduction if cash payment equals to Opening Invoice pluses Credit note pluses Deduction
+					WHEN B14_14_TT_BSAID_SNAPSHOT_CASH_PAYMENT + ZF_BSAID_DMBTR_DEDUCTION_CUC + BSAID_DMBTR + ZF_BSAID_DMBTR_CREDIT_NOTE_CUC = 0
+						AND (B14_14_TT_BSAID_SNAPSHOT_CASH_PAYMENT <> 0 AND ZF_BSAID_DMBTR_CREDIT_NOTE_CUC <> 0) THEN 0
+					ELSE ZF_BSAID_DMBTR_DEDUCTION_CUC
+				END,
+
+				ZF_BSAID_DMBTR_CREDIT_NOTE = 
+				CASE
+					--exclude credit note if Opening invoice equals to cash payment 
+					--and deduction pluses credit note pluses other equal zeroes
+					WHEN BSAID_DMBTR + B14_14_TT_BSAID_SNAPSHOT_CASH_PAYMENT = 0
+					AND ISNULL(ZF_BSAID_DMBTR_DEDUCTION,0) + ISNULL(ZF_BSAID_DMBTR_CREDIT_NOTE,0) + ISNULL(ZF_BSAID_DMBTR_OTH,0) = 0 THEN 0
+					--exclude credit note if cash payment equals to Opening Invoice pluses Credit note pluses Deduction
+					WHEN (B14_14_TT_BSAID_SNAPSHOT_CASH_PAYMENT + ZF_BSAID_DMBTR_DEDUCTION + BSAID_DMBTR + ZF_BSAID_DMBTR_CREDIT_NOTE = 0)
+						AND (B14_14_TT_BSAID_SNAPSHOT_CASH_PAYMENT <> 0 AND ZF_BSAID_DMBTR_DEDUCTION <> 0) THEN 0
+					ELSE ZF_BSAID_DMBTR_CREDIT_NOTE
+				END,
+				ZF_BSAID_DMBTR_CREDIT_NOTE_CUC = 
+				CASE
+					--exclude credit note if Opening invoice equals to cash payment 
+					--and deduction pluses credit note pluses other equal zeroes
+					WHEN ZF_BSAID_DMBTR_CUC + B14_14_TT_BSAID_SNAPSHOT_CASH_PAYMENT = 0
+					AND ISNULL(ZF_BSAID_DMBTR_DEDUCTION_CUC,0) + ISNULL(ZF_BSAID_DMBTR_CREDIT_NOTE_CUC,0) + ISNULL(ZF_BSAID_DMBTR_OTH_CUC,0) = 0 THEN 0
+					--exclude credit note if cash payment equals to Opening Invoice pluses Credit note pluses Deduction
+					WHEN (B14_14_TT_BSAID_SNAPSHOT_CASH_PAYMENT + ZF_BSAID_DMBTR_DEDUCTION_CUC + BSAID_DMBTR + ZF_BSAID_DMBTR_CREDIT_NOTE_CUC = 0)
+						AND (B14_14_TT_BSAID_SNAPSHOT_CASH_PAYMENT <> 0 AND ZF_BSAID_DMBTR_DEDUCTION_CUC <> 0) THEN 0
+					ELSE ZF_BSAID_DMBTR_CREDIT_NOTE_CUC
+				END,
+				ZF_BSAID_DMBTR_OTH = 
+				CASE
+					--exclude other if Opening invoice equals to cash payment 
+					--and deduction pluses credit note pluses other equal zeroes
+					WHEN BSAID_DMBTR + B14_14_TT_BSAID_SNAPSHOT_CASH_PAYMENT = 0
+					AND ISNULL(ZF_BSAID_DMBTR_DEDUCTION,0) + ISNULL(ZF_BSAID_DMBTR_CREDIT_NOTE,0) + ISNULL(ZF_BSAID_DMBTR_OTH,0) = 0 THEN 0
+					--exclude other if cash payment equals to Opening Invoice pluses Credit note pluses Deduction
+					WHEN B14_14_TT_BSAID_SNAPSHOT_CASH_PAYMENT + ZF_BSAID_DMBTR_DEDUCTION + BSAID_DMBTR + ZF_BSAID_DMBTR_CREDIT_NOTE = 0 THEN 0
+					ELSE ZF_BSAID_DMBTR_OTH
+				END,
+
+				ZF_BSAID_DMBTR_OTH_CUC = 
+				CASE
+					--exclude other if Opening invoice equals to cash payment 
+					--and deduction pluses credit note pluses other equal zeroes
+					WHEN ZF_BSAID_DMBTR_CUC + B14_14_TT_BSAID_SNAPSHOT_CASH_PAYMENT = 0
+					AND ISNULL(ZF_BSAID_DMBTR_DEDUCTION_CUC,0) + ISNULL(ZF_BSAID_DMBTR_CREDIT_NOTE_CUC,0) + ISNULL(ZF_BSAID_DMBTR_OTH_CUC,0) = 0 THEN 0
+					--exclude other if cash payment equals to Opening Invoice pluses Credit note pluses Deduction
+					WHEN B14_14_TT_BSAID_SNAPSHOT_CASH_PAYMENT + ZF_BSAID_DMBTR_DEDUCTION_CUC + ZF_BSAID_DMBTR_CUC + ZF_BSAID_DMBTR_CREDIT_NOTE_CUC = 0 THEN 0
+					ELSE ZF_BSAID_DMBTR_OTH_CUC
+				END
+		UPDATE B14_18_TT_BSAID_INV
+			SET ZF_BSAID_DMBTR_OT_AT_SNDTX_MTHX = IIF(ZF_BSAID_DMBTR_OT_AT_SNDTX_MTHX > 0
+				OR (B14_14_TT_BSAID_SNAPSHOT_CASH_PAYMENT = 0
+					AND ZF_BSAID_DMBTR_DEDUCTION = 0
+					AND ZF_BSAID_DMBTR_CREDIT_NOTE = 0
+					AND ZF_BSAID_DMBTR_OTH = 0), ZF_BSAID_DMBTR_OT_AT_SNDTX_MTHX, 0),
+					
+				ZF_BSAID_DMBTR_OT_AT_SNDTX_MTHX_CUC = IIF(ZF_BSAID_DMBTR_OT_AT_SNDTX_MTHX_CUC > 0
+				OR (B14_14_TT_BSAID_SNAPSHOT_CASH_PAYMENT = 0
+					AND ZF_BSAID_DMBTR_DEDUCTION_CUC = 0
+					AND ZF_BSAID_DMBTR_CREDIT_NOTE_CUC = 0
+					AND ZF_BSAID_DMBTR_OTH_CUC = 0), ZF_BSAID_DMBTR_OT_AT_SNDTX_MTHX_CUC, 0),
+
+			ZF_C_BUCKET_W_DZ_DG_DA_OTHER = ABS(ISNULL(B14_14_TT_BSAID_SNAPSHOT_CASH_PAYMENT, 0))
+			 + ABS(ISNULL(ZF_BSAID_DMBTR_DEDUCTION, 0))
+			 + ABS(ISNULL(ZF_BSAID_DMBTR_CREDIT_NOTE, 0))
+			 + ABS(ISNULL(ZF_BSAID_DMBTR_OTH, 0))
+			 + IIF(ZF_BSAID_DMBTR_OT_AT_SNDTX_MTHX > 0
+				OR (B14_14_TT_BSAID_SNAPSHOT_CASH_PAYMENT = 0
+					AND ZF_BSAID_DMBTR_DEDUCTION = 0
+					AND ZF_BSAID_DMBTR_CREDIT_NOTE = 0
+					AND ZF_BSAID_DMBTR_OTH = 0), ABS(ZF_BSAID_DMBTR_OT_AT_SNDTX_MTHX), 0),
+
+			ZF_C_BUCKET_W_DZ_DG_DA_OTHER_CUC = ABS(ISNULL(B14_14_TT_BSAID_SNAPSHOT_CASH_PAYMENT, 0))
+			 + ABS(ISNULL(ZF_BSAID_DMBTR_DEDUCTION_CUC, 0))
+			 + ABS(ISNULL(ZF_BSAID_DMBTR_CREDIT_NOTE_CUC, 0))
+			 + ABS(ISNULL(ZF_BSAID_DMBTR_OTH_CUC, 0))
+			 + IIF(ZF_BSAID_DMBTR_OT_AT_SNDTX_MTHX_CUC > 0
+				OR (B14_14_TT_BSAID_SNAPSHOT_CASH_PAYMENT_CUC = 0
+					AND ZF_BSAID_DMBTR_DEDUCTION_CUC = 0
+					AND ZF_BSAID_DMBTR_CREDIT_NOTE_CUC = 0
+					AND ZF_BSAID_DMBTR_OTH_CUC = 0), ABS(ZF_BSAID_DMBTR_OT_AT_SNDTX_MTHX_CUC), 0)
+
+
+		UPDATE B14_18_TT_BSAID_INV
+			SET
+			ZF_BSAID_DMBTR_OT_AT_SNDTX_MTHX =  
+					IIF(ZF_C_BUCKET_W_DZ_DG_DA_OTHER <> 0, BSAID_DMBTR * (ZF_BSAID_DMBTR_OT_AT_SNDTX_MTHX / ZF_C_BUCKET_W_DZ_DG_DA_OTHER), 0),
+			ZF_BSAID_DMBTR_INV_CASH_PAYMENT_AT_SNDTX_MTHX = 
+					IIF(ZF_C_BUCKET_W_DZ_DG_DA_OTHER <> 0, BSAID_DMBTR * (B14_14_TT_BSAID_SNAPSHOT_CASH_PAYMENT / ZF_C_BUCKET_W_DZ_DG_DA_OTHER), 0),
+			ZF_BSAID_DMBTR_INV_DEDUCTION_AT_SNDTX_MTHX = 
+					IIF(ZF_C_BUCKET_W_DZ_DG_DA_OTHER <> 0, BSAID_DMBTR * (ZF_BSAID_DMBTR_DEDUCTION / ZF_C_BUCKET_W_DZ_DG_DA_OTHER), 0),
+			ZF_BSAID_DMBTR_INV_CREDIT_NOTE_AT_SNDTX_MTHX = 
+					IIF(ZF_C_BUCKET_W_DZ_DG_DA_OTHER <> 0, BSAID_DMBTR * (ZF_BSAID_DMBTR_CREDIT_NOTE / ZF_C_BUCKET_W_DZ_DG_DA_OTHER), 0),
+			ZF_BSAID_DMBTR_INV_OTH_AT_SNDTX_MTHX = 
+					IIF(ZF_C_BUCKET_W_DZ_DG_DA_OTHER <> 0, BSAID_DMBTR * (ZF_BSAID_DMBTR_OTH / ZF_C_BUCKET_W_DZ_DG_DA_OTHER), 0),
+			ZF_BSAID_DMBTR_OT_AT_SNDTX_MTHX_CUC =  
+					IIF(ZF_C_BUCKET_W_DZ_DG_DA_OTHER_CUC <> 0, ZF_BSAID_DMBTR_CUC * (ZF_BSAID_DMBTR_OT_AT_SNDTX_MTHX_CUC / ZF_C_BUCKET_W_DZ_DG_DA_OTHER_CUC), 0),
+			ZF_BSAID_DMBTR_INV_CASH_PAYMENT_AT_SNDTX_MTHX_CUC = 
+					IIF(ZF_C_BUCKET_W_DZ_DG_DA_OTHER_CUC <> 0, ZF_BSAID_DMBTR_CUC * (B14_14_TT_BSAID_SNAPSHOT_CASH_PAYMENT_CUC / ZF_C_BUCKET_W_DZ_DG_DA_OTHER_CUC), 0),
+			ZF_BSAID_DMBTR_INV_DEDUCTION_AT_SNDTX_MTHX_CUC = 
+					IIF(ZF_C_BUCKET_W_DZ_DG_DA_OTHER_CUC <> 0, ZF_BSAID_DMBTR_CUC * (ZF_BSAID_DMBTR_DEDUCTION_CUC / ZF_C_BUCKET_W_DZ_DG_DA_OTHER_CUC), 0),
+			ZF_BSAID_DMBTR_INV_CREDIT_NOTE_AT_SNDTX_MTHX_CUC = 
+					IIF(ZF_C_BUCKET_W_DZ_DG_DA_OTHER_CUC <> 0, ZF_BSAID_DMBTR_CUC * (ZF_BSAID_DMBTR_CREDIT_NOTE_CUC / ZF_C_BUCKET_W_DZ_DG_DA_OTHER_CUC), 0),
+			ZF_BSAID_DMBTR_INV_OTH_AT_SNDTX_MTHX_CUC = 
+					IIF(ZF_C_BUCKET_W_DZ_DG_DA_OTHER_CUC <> 0, ZF_BSAID_DMBTR_CUC * (ZF_BSAID_DMBTR_OTH_CUC / ZF_C_BUCKET_W_DZ_DG_DA_OTHER_CUC), 0)
+			
+			
+		--insert outstanding payment into output
+		INSERT INTO B14_10_TT_T4_OUTPUT
+		SELECT
+			B14_18_TT_BSAID_INV.BSAID_MANDT
+			,B14_18_TT_BSAID_INV.BSAID_BUKRS
+			,NULL 
+			,B14_18_TT_BSAID_INV.BSAID_AUGBL
+			,NULL
+			,NULL
+			,NULL
+			,NULL
+			,NULL
+			,B14_18_TT_BSAID_INV.BSAID_AUGDT
+			,B14_18_TT_BSAID_INV.BSAID_WAERS
+			,B14_18_TT_BSAID_INV.ZF_BSAID_DMBTR_OT_AT_SNDTX_MTHX
+			,B14_18_TT_BSAID_INV.ZF_BSAID_DMBTR_OT_AT_SNDTX_MTHX_CUC
+			,1
+			,@snapshot_date
+			,@snapshot_date_ageing
+			,CASE
+				WHEN ISNULL(B14_18_TT_BSAID_INV.BSAID_AUGDT, '') = '' THEN 'X'
+				WHEN DATEDIFF(dd, B14_18_TT_BSAID_INV.BSAID_AUGDT, @snapshot_date) > 0 THEN 'X'
+				WHEN ISNULL(B14_18_TT_BSAID_INV.BSAID_BUKRS, '') <> '' THEN 'X'
+				ELSE '' END
+			,'C'
+			, '', ''
+		FROM B14_18_TT_BSAID_INV
+		WHERE ZF_BSAID_DMBTR_OT_AT_SNDTX_MTHX <> 0
+
+		--insert cash payment into output
+		INSERT INTO B14_10_TT_T4_OUTPUT
+		SELECT
+			 B14_18_TT_BSAID_INV.BSAID_MANDT
+			,B14_18_TT_BSAID_INV.BSAID_BUKRS
+			,NULL 
+			,B14_18_TT_BSAID_INV.BSAID_AUGBL
+			,NULL
+			,NULL
+			,NULL
+			,NULL
+			,NULL
+			,B14_18_TT_BSAID_INV.BSAID_AUGDT
+			,B14_18_TT_BSAID_INV.BSAID_WAERS
+			,B14_18_TT_BSAID_INV.ZF_BSAID_DMBTR_INV_CASH_PAYMENT_AT_SNDTX_MTHX
+			,B14_18_TT_BSAID_INV.ZF_BSAID_DMBTR_INV_CASH_PAYMENT_AT_SNDTX_MTHX_CUC
+			,1
+			,@snapshot_date
+			,@snapshot_date_ageing
+			,CASE
+				WHEN ISNULL(B14_18_TT_BSAID_INV.BSAID_AUGDT, '') = '' THEN 'X'
+				WHEN DATEDIFF(dd, B14_18_TT_BSAID_INV.BSAID_AUGDT, @snapshot_date) > 0 THEN 'X'
+				WHEN ISNULL(B14_18_TT_BSAID_INV.BSAID_BUKRS, '') <> '' THEN 'X'
+				ELSE '' END
+			,'D'
+			, '', ''
+		FROM B14_18_TT_BSAID_INV
+		WHERE ZF_BSAID_DMBTR_INV_CASH_PAYMENT_AT_SNDTX_MTHX <> 0
+		
+		--insert deduction into output
+		INSERT INTO B14_10_TT_T4_OUTPUT
+		SELECT
+			 B14_18_TT_BSAID_INV.BSAID_MANDT
+			,B14_18_TT_BSAID_INV.BSAID_BUKRS
+			,NULL 
+			,B14_18_TT_BSAID_INV.BSAID_AUGBL
+			,NULL
+			,NULL
+			,NULL
+			,NULL
+			,NULL
+			,B14_18_TT_BSAID_INV.BSAID_AUGDT
+			,B14_18_TT_BSAID_INV.BSAID_WAERS
+			,B14_18_TT_BSAID_INV.ZF_BSAID_DMBTR_INV_DEDUCTION_AT_SNDTX_MTHX
+			,B14_18_TT_BSAID_INV.ZF_BSAID_DMBTR_INV_DEDUCTION_AT_SNDTX_MTHX_CUC
+			,1
+			,@snapshot_date
+			,@snapshot_date_ageing
+			,CASE
+				WHEN ISNULL(B14_18_TT_BSAID_INV.BSAID_AUGDT, '') = '' THEN 'X'
+				WHEN DATEDIFF(dd, B14_18_TT_BSAID_INV.BSAID_AUGDT, @snapshot_date) > 0 THEN 'X'
+				WHEN ISNULL(B14_18_TT_BSAID_INV.BSAID_BUKRS, '') <> '' THEN 'X'
+				ELSE '' END
+			,'F'
+			, '', ''
+		FROM B14_18_TT_BSAID_INV
+		WHERE ZF_BSAID_DMBTR_INV_DEDUCTION_AT_SNDTX_MTHX <> 0
+
+		--insert credit note into output
+		INSERT INTO B14_10_TT_T4_OUTPUT
+		SELECT
+			 B14_18_TT_BSAID_INV.BSAID_MANDT
+			,B14_18_TT_BSAID_INV.BSAID_BUKRS
+			,NULL 
+			,B14_18_TT_BSAID_INV.BSAID_AUGBL
+			,NULL
+			,NULL
+			,NULL
+			,NULL
+			,NULL
+			,B14_18_TT_BSAID_INV.BSAID_AUGDT
+			,B14_18_TT_BSAID_INV.BSAID_WAERS
+			,B14_18_TT_BSAID_INV.ZF_BSAID_DMBTR_INV_CREDIT_NOTE_AT_SNDTX_MTHX
+			,B14_18_TT_BSAID_INV.ZF_BSAID_DMBTR_INV_CREDIT_NOTE_AT_SNDTX_MTHX_CUC
+			,1
+			,@snapshot_date
+			,@snapshot_date_ageing
+			,CASE
+				WHEN ISNULL(B14_18_TT_BSAID_INV.BSAID_AUGDT, '') = '' THEN 'X'
+				WHEN DATEDIFF(dd, B14_18_TT_BSAID_INV.BSAID_AUGDT, @snapshot_date) > 0 THEN 'X'
+				WHEN ISNULL(B14_18_TT_BSAID_INV.BSAID_BUKRS, '') <> '' THEN 'X'
+				ELSE '' END
+			,'E'
+			, '', ''
+		FROM B14_18_TT_BSAID_INV
+		WHERE ZF_BSAID_DMBTR_INV_CREDIT_NOTE_AT_SNDTX_MTHX <> 0
+
+		--OTH
+		INSERT INTO B14_10_TT_T4_OUTPUT
+		SELECT
+			 B14_18_TT_BSAID_INV.BSAID_MANDT
+			,B14_18_TT_BSAID_INV.BSAID_BUKRS
+			,NULL 
+			,B14_18_TT_BSAID_INV.BSAID_AUGBL
+			,NULL
+			,NULL
+			,NULL
+			,NULL
+			,NULL
+			,B14_18_TT_BSAID_INV.BSAID_AUGDT
+			,B14_18_TT_BSAID_INV.BSAID_WAERS
+			,B14_18_TT_BSAID_INV.ZF_BSAID_DMBTR_INV_OTH_AT_SNDTX_MTHX
+			,B14_18_TT_BSAID_INV.ZF_BSAID_DMBTR_INV_OTH_AT_SNDTX_MTHX_CUC
+			,1
+			,@snapshot_date
+			,@snapshot_date_ageing
+			,CASE
+				WHEN ISNULL(B14_18_TT_BSAID_INV.BSAID_AUGDT, '') = '' THEN 'X'
+				WHEN DATEDIFF(dd, B14_18_TT_BSAID_INV.BSAID_AUGDT, @snapshot_date) > 0 THEN 'X'
+				WHEN ISNULL(B14_18_TT_BSAID_INV.BSAID_BUKRS, '') <> '' THEN 'X'
+				ELSE '' END
+			,'G'
+			, '', ''
+		FROM B14_18_TT_BSAID_INV
+		WHERE ZF_BSAID_DMBTR_INV_OTH_AT_SNDTX_MTHX <> 0
+		
+		SET @snapshot_date_ageing = DATEADD (DD, -1, DATEADD(MM, DATEDIFF(MM, 0, @snapshot_date_ageing) + 2, 0))
+	END
+END
+	/*
+		Update: July 13, 2021
+		Step 1: Create a temporary table convert update command to select into command to imporve sql performance.
+				ALTER TABLE B14_10_TT_T4_OUTPUT
+				ADD ZF_BSAID_DMBTR_COC FLOAT,
+				T001_WAERS NVARCHAR(5),
+				GLOBALS_CURRENCY VARCHAR(5),
+				ZF_BSAID_DMBTR_CUC FLOAT,
+				T077X_INTERCO_TXT NVARCHAR(50)
+	
+				/// Update command 1 ///
+				UPDATE B14_10_TT_T4_OUTPUT
+				SET 
+					ZF_DOCUMENT_TYPE_DESC = CASE 
+												WHEN ZF_DOCUMENT_TYPE = 'B' OR ZF_DOCUMENT_TYPE = 'Outstanding' THEN 'Open Invoice'
+												WHEN ZF_DOCUMENT_TYPE = 'C' THEN 'Invoice - Outstanding'
+												WHEN ZF_DOCUMENT_TYPE = 'D' THEN 'Cash payment'
+												WHEN ZF_DOCUMENT_TYPE = 'E' THEN 'Credit note'
+												WHEN ZF_DOCUMENT_TYPE = 'F' THEN 'Deduction'
+												WHEN ZF_DOCUMENT_TYPE = 'G' THEN 'Others'
+												Else 'Unclassified' END,
+					T077X_INTERCO_TXT = (SELECT TOP 1 INTERCO_TXT FROM 
+											A_KNA1 LEFT JOIN AM_T077X ON KNA1_KTOKD = T077X_KTOKD
+											WHERE KNA1_KUNNR = BSAID_KUNNR),
+					B14_10_TT_T4_OUTPUT.T001_WAERS = A_T001.T001_WAERS,
+					ZF_BSAID_DMBTR_COC = CONVERT(MONEY, B14_10_TT_T4_OUTPUT.BSAID_DMBTR * ISNULL(B00_TCURX.TCURX_FACTOR,1)),
+					GLOBALS_CURRENCY = @currency,
+					ZF_BSAID_DMBTR_CUC = CONVERT(money,B14_10_TT_T4_OUTPUT.BSAID_DMBTR * ISNULL(B00_TCURX.TCURX_FACTOR,1) * AM_EXCHNG.EXCHNG_RATIO)
+											FROM B14_10_TT_T4_OUTPUT
+												LEFT JOIN A_T001
+												ON  (B14_10_TT_T4_OUTPUT.BSAID_BUKRS = A_T001.T001_BUKRS) 
+												LEFT JOIN AM_EXCHNG 
+												ON  (A_T001.T001_WAERS = AM_EXCHNG.EXCHNG_FROM) AND
+													(AM_EXCHNG.EXCHNG_TO = @currency)
+
+												-- Get currency conversion factors 
+												LEFT JOIN B00_TCURX
+												ON (A_T001.T001_WAERS = B00_TCURX.TCURX_CURRKEY)
+
+					/// Update command 2 ///
+					EXEC dbo.SP_DROPTABLE 'B14_19_IT_T4_OUTPUT'
+					ALTER TABLE B14_10_TT_T4_OUTPUT
+					ADD ZF_SNAPSHOT_DATE_DIFF INT
+
+					UPDATE B14_10_TT_T4_OUTPUT
+					SET ZF_SNAPSHOT_DATE_DIFF = DATEDIFF(MM, ZF_SNAPSHOT_DATE, ZF_SNAPSHOT_DATE_AGEING)
+
+	*/
+	EXEC SP_REMOVE_TABLES 'B14_11_TT_T4_OUTPUT'
+	SELECT DISTINCT
+		BSAID_MANDT,
+		BSAID_BUKRS,
+		BSAID_BUDAT,
+		BSAID_AUGBL,
+		BSAID_KUNNR,
+		BSAID_BELNR,
+		BSAID_BUZEI,
+		BSAID_BLART,
+		A_T003T.T003T_LTEXT,
+		BSAID_BSCHL,
+		BSAID_AUGDT,
+		BSAID_WAERS,
+		BSAID_DMBTR,
+		ZF_BSAID_SHKZG_INTEGER,
+		ZF_SNAPSHOT_DATE,
+		ZF_SNAPSHOT_DATE_AGEING,
+		ZF_B_OUTSTANDING_AT_SNAPSHOT_DATE,
+		ZF_DOCUMENT_TYPE,
+		CASE ZF_DOCUMENT_TYPE
+			WHEN 'B' THEN 'Open Invoice'
+			WHEN 'Outstanding' THEN 'Open Invoice'
+			WHEN 'C' THEN 'Invoice - Outstanding'
+			WHEN 'D' THEN 'Cash payment'
+			WHEN 'E' THEN 'Credit note'
+			WHEN 'F' THEN 'Deduction'
+			WHEN 'G' THEN 'Others'
+			Else 'Unclassified'
+		END ZF_DOCUMENT_TYPE_DESC,
+		AM_T077X.INTERCO_TXT T077X_INTERCO_TXT,
+		T001_WAERS,
+		CONVERT(MONEY, BSAID_DMBTR * ISNULL(B00_TCURX.TCURX_FACTOR,1)) ZF_BSAID_DMBTR_COC,
+		@CURRENCY GLOBALS_CURRENCY,
+		ZF_BSAID_DMBTR_CUC,
+	    DATEDIFF(MM, ZF_SNAPSHOT_DATE, ZF_SNAPSHOT_DATE_AGEING) ZF_SNAPSHOT_DATE_DIFF
+	INTO B14_11_TT_T4_OUTPUT
+	FROM B14_10_TT_T4_OUTPUT
+	
+	--Get customer infor
+	LEFT JOIN A_KNA1
+	ON BSAID_KUNNR = KNA1_KUNNR
+
+	--Get customer group infor
+	LEFT JOIN AM_T077X
+	ON KNA1_KTOKD = T077X_KTOKD
+
+	--Get local currency informatiom
+	LEFT JOIN A_T001
+	ON BSAID_BUKRS = A_T001.T001_BUKRS
+
+	--Get document type desc
+	LEFT JOIN A_T003T
+	ON T003T_SPRAS IN ('E', 'EN') AND
+	   BSAID_BLART = T003T_BLART
+
+	--Get currency factor
+	LEFT JOIN B00_TCURX
+	ON TCURX_CURRKEY = T001_WAERS
+
+	
+
+EXEC SP_REMOVE_TABLES 'B14_19_IT_T4_OUTPUT'
+EXEC sp_rename 'B14_11_TT_T4_OUTPUT', 'B14_19_IT_T4_OUTPUT'
+EXEC SP_REMOVE_TABLES '%_TT_%'
+
+
+/* log end of procedure*/
+INSERT INTO [DBO].[LOG_SP_EXECUTION] ([DATABASE],[OBJECT],[OBJECT_TYPE],[USER],[DATE],[TIME],[DESCRIPTION],[TABLE],[ROWS])
+SELECT DB_NAME(),OBJECT_NAME(@@PROCID),'P',SYSTEM_USER,CONVERT(date,GETDATE()),CONVERT(time,GETDATE()),'Procedure finished',NULL,NULL
+
+--Duplicate check 
+--SELECT BSAID_MANDT, BSAID_BUKRS, BSAID_GJAHR, BSAID_BELNR, Line item nr, COUNT(*) AS Nr of records FROM dbo.B14_06_IT_ARE
+--GROUP BY BSAID_MANDT, BSAID_BUKRS, BSAID_GJAHR, BSAID_BELNR, Line item nr HAVING COUNT(*) > 1
+
+EXEC sp_RENAME_FIELD 'B14_', 'B14_06_IT_ARE'
+EXEC SP_UNNAME_FIELD 'B07D_', 'B14_06_IT_ARE'
+EXEC sp_RENAME_FIELD 'B14B_', 'B14_19_IT_T4_OUTPUT'
+
+
+GO

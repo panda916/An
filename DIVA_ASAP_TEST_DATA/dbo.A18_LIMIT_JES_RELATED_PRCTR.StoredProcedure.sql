@@ -1,0 +1,215 @@
+USE [DIVA_ASAP_TEST_DATA]
+GO
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+
+CREATE PROC [dbo].[A18_LIMIT_JES_RELATED_PRCTR]
+AS
+
+------------------------------------------------------------------------------RELATED BSEG TABLE---------------------------------------------------------------------------
+
+-- Step 1 / Related to BSEG table
+-- 1/ From BSEG table get all distinct BUKRS, GJAHR, BELNR  related list of PRCTR for Canada from Jesper
+-- Profit centers that end on CA00, CA04, CA14, CA21, CA28
+EXEC SP_REMOVE_TABLES 'A18_01_TT_JES_RELATED_PRCTR_STEP1'
+
+SELECT DISTINCT 
+	BSEG_BUKRS,
+	BSEG_BELNR,
+	BSEG_GJAHR
+INTO A18_01_TT_JES_RELATED_PRCTR_STEP1
+FROM DIVA_US00_FY21_22_23..A_BSEG
+WHERE 
+	BSEG_PRCTR LIKE '%CA00'
+	OR  BSEG_PRCTR LIKE '%CA04'
+	OR  BSEG_PRCTR LIKE '%CA14'
+	OR  BSEG_PRCTR LIKE '%CA21'
+	OR  BSEG_PRCTR LIKE '%CA28'
+
+-- Step  2 / From BSEG table get all lines with JES in step1 ( key link based on BSEG_BUKRS, BSEG_BELNR, BSEG_GJAHR)
+-- Number of record : 530,664
+EXEC SP_REMOVE_TABLES 'A18_02_TT_JES_RELATED_PRCTR_STEP2'
+SELECT 
+	*
+INTO A18_02_TT_JES_RELATED_PRCTR_STEP2
+FROM  DIVA_US00_FY21_22_23..A_BSEG A 
+WHERE EXISTS 
+(
+	SELECT TOP 1 1 
+	FROM A18_01_TT_JES_RELATED_PRCTR_STEP1 B
+	WHERE A.BSEG_BUKRS = B.BSEG_BUKRS
+		AND A.BSEG_BELNR = B.BSEG_BELNR
+		AND A.BSEG_GJAHR = B.BSEG_GJAHR
+)
+
+-- Step 3 / FROM BSEG table : Get all JEs with BUKRS, AUGDT, AUGBL related to PRCTR for Canada from Jesper
+
+-- Step 3.1 / Get all DISTINCT BUKRS, AUGDT, AUGBL related to JE in step 2 : WHERE BSEG_AUGBL IS NOT  NULL OR BSEG_AUGBL <> ''
+-- Step 3.2 / Get all JEs with BUKRS, AUGDT, AUGBL related to PRCTR for Canada from Jesper
+
+EXEC SP_REMOVE_TABLES 'A18_03_TT_JES_WITH_CLEARING_RELATED_PRCTR_STEP3'
+
+SELECT 
+	DISTINCT 
+		BSEG_BUKRS,
+		BSEG_BELNR,
+		BSEG_GJAHR
+INTO A18_03_TT_JES_WITH_CLEARING_RELATED_PRCTR_STEP3
+FROM DIVA_US00_FY21_22_23..A_BSEG A 
+WHERE EXISTS 
+(
+	SELECT TOP 1 1  
+	FROM A18_02_TT_JES_RELATED_PRCTR_STEP2 B 
+	WHERE A.BSEG_BUKRS = B.BSEG_BUKRS
+		AND A.BSEG_AUGBL = B.BSEG_AUGBL
+		AND A.BSEG_AUGDT = B.BSEG_AUGDT
+		AND (B.BSEG_AUGBL IS NOT NULL and B.BSEG_AUGBL <> '')
+)
+
+-- Step 4 / From BSEG table get all lines with JES in step 3 ( key link based on BSEG_BUKRS, BSEG_BELNR, BSEG_GJAHR)
+-- 36M
+-- 1,333,164
+EXEC SP_REMOVE_TABLES 'A18_04_TT_JES_WITH_CLEARING_RELATED_PRCTR_STEP4'
+SELECT 
+	*
+INTO A18_04_TT_JES_WITH_CLEARING_RELATED_PRCTR_STEP4
+FROM  DIVA_US00_FY21_22_23..A_BSEG A 
+WHERE EXISTS 
+(
+	SELECT TOP 1 1 
+	FROM A18_03_TT_JES_WITH_CLEARING_RELATED_PRCTR_STEP3 B
+	WHERE A.BSEG_BUKRS = B.BSEG_BUKRS
+		AND A.BSEG_BELNR = B.BSEG_BELNR
+		AND A.BSEG_GJAHR = B.BSEG_GJAHR
+)
+
+-- Step 5 / Append value from step 2 and step 4 into BSEG
+
+-- 1,686,287 record
+EXEC SP_REMOVE_TABLES 'A_BSEG'
+
+SELECT 
+*
+INTO A_BSEG
+FROM A18_02_TT_JES_RELATED_PRCTR_STEP2
+UNION
+SELECT 
+*
+FROM A18_04_TT_JES_WITH_CLEARING_RELATED_PRCTR_STEP4
+
+
+-- Step 6/ Check duplicate value if BSEG
+
+SELECT COUNT(*)
+FROM A_BSEG 
+GROUP BY BSEG_BELNR, BSEG_GJAHR, BSEG_BUKRS, BSEG_BUZEI
+HAVING COUNT(*) > 1
+
+-- 
+------------------------------------------------------------------------------RELATED BKPF TABLE---------------------------------------------------------------------------
+-- Step 6 / Limite BKPF based on BSEG table ( key joinb BELNR, GJAHR, BUKRS
+-- 259,387 record
+EXEC SP_REMOVE_TABLES 'A_BKPF'
+
+SELECT *
+INTO A_BKPF
+FROM DIVA_US00_FY21_22_23..A_BKPF
+WHERE EXISTS 
+(
+
+	SELECT TOP 1 1 
+	FROM A_BSEG
+	WHERE BKPF_BUKRS = BSEG_BUKRS
+	AND BKPF_BELNR = BSEG_BELNR
+	AND BKPF_GJAHR = BSEG_GJAHR
+
+)
+------------------------------------------------------------------------------RELATED BSAK/ BSIK AP TABLE---------------------------------------------------------------------------
+
+-- Step 7 / Limite BSAK based on BSEG table ( key joinb BELNR, GJAHR, BUKRS )
+
+EXEC SP_REMOVE_TABLES 'A_BSAK'
+
+SELECT *
+INTO A_BSAK
+FROM DIVA_US00_FY21_22_23..A_BSAK
+WHERE EXISTS 
+(
+
+	SELECT TOP 1 1 
+	FROM A_BSEG
+	WHERE BSAK_BUKRS = BSEG_BUKRS
+	AND BSAK_BELNR = BSEG_BELNR
+	AND BSAK_GJAHR = BSEG_GJAHR
+
+
+)
+
+-- Step 8  / Limite BSIK based on BSEG table ( key joinb BELNR, GJAHR, BUKRS )
+
+EXEC SP_REMOVE_TABLES 'A_BSIK'
+
+SELECT *
+INTO A_BSIK
+FROM DIVA_US00_FY21_22_23..A_BSIK
+WHERE EXISTS 
+(
+	SELECT TOP 1 1 
+	FROM A_BSEG
+	WHERE BSIK_BUKRS = BSEG_BUKRS
+	AND BSIK_BELNR = BSEG_BELNR
+	AND BSIK_GJAHR = BSEG_GJAHR
+)
+
+------------------------------------------------------------------------------RELATED BSAD/ BSID AP TABLE---------------------------------------------------------------------------
+-- Step 9  / Limite BSAD based on BSEG table ( key joinb BELNR, GJAHR, BUKRS )
+
+
+EXEC SP_REMOVE_TABLES 'A_BSAD'
+
+SELECT *
+INTO A_BSAD
+FROM DIVA_US00_FY21_22_23..A_BSAD
+WHERE EXISTS 
+(
+
+	SELECT TOP 1 1 
+	FROM A_BSEG
+	WHERE BSAD_BUKRS = BSEG_BUKRS
+	AND BSAD_BELNR = BSEG_BELNR
+	AND BSAD_GJAHR = BSEG_GJAHR
+
+)
+
+-- Step 10  / Limite BSID based on BSEG table ( key joinb BELNR, GJAHR, BUKRS )
+
+EXEC SP_REMOVE_TABLES 'A_BSID'
+
+SELECT *
+INTO A_BSID
+FROM DIVA_US00_FY21_22_23..A_BSID
+WHERE EXISTS 
+(
+
+	SELECT TOP 1 1 
+	FROM A_BSEG
+	WHERE BSID_BUKRS = BSEG_BUKRS
+	AND BSID_BELNR = BSEG_BELNR
+	AND BSID_GJAHR = BSEG_GJAHR
+
+)
+
+
+-- bseg, bkpf, ap, ar
+-- stream : copy 
+
+
+-------------------------------------------------RUN B CUBES----------------------------------------
+
+
+
+
+
+GO

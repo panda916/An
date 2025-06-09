@@ -1,0 +1,252 @@
+USE [DIVA_SOTHAI_WARRANTY]
+GO
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+CREATE      PROC [dbo].[B02_PRICE_CHANGE_FOR_LIAN]
+
+AS
+
+--- Step 1 / Store table PRICE_DIFF before run 
+DROP TABLE IF EXISTS B02_01_TT_PRICE_OLD_FILE
+
+SELECT *
+INTO B02_01_TT_PRICE_OLD_FILE
+FROM PRICE_DIFF
+
+
+-- 1.2 Remove some unnes columns 
+	
+ALTER TABLE B02_01_TT_PRICE_OLD_FILE DROP COLUMN ZF_SELL_AMOUNT_GREATER_THAN_CLAIM_AMOUNT,	ZF_EXCHANGE,	ZF_ORDER_TYPE_ENG,	ZF_RETURN_BROKEN_PART_ENG
+
+-- 1.3 Append the table new and old together.
+
+DROP TABLE IF EXISTS B02_02_TT_PRICE_COMBINE_DATA 
+
+SELECT 
+	*,
+	'OLD' AS ZF_FLAG
+INTO B02_02_TT_PRICE_COMBINE_DATA
+FROM B02_01_TT_PRICE_OLD_FILE
+UNION ALL
+SELECT 
+	*,
+	'NEW' AS ZF_FLAG
+FROM OUPUT
+
+
+
+
+
+SELECT 
+	[Job number], [Part code], [PO number],[Invoice number_NPC]
+FROM B02_01_TT_PRICE_OLD_FILE
+GROUP BY [Job number], [Part code], [PO number], [Invoice number_NPC]
+HAVING COUNT(*) > 1
+
+
+SELECT  *
+FROM B02_01_TT_PRICE_OLD_FILE
+WHERE [Job number] = 'JC0038621'
+AND [Part code] = '503464131'
+
+
+
+
+
+
+-- Step 2 / Insert the column variable 
+-- 2.1 ZF_EXCHANGE
+
+ALTER TABLE B02_02_TT_PRICE_COMBINE_DATA  ADD ZF_EXCHANGE FLOAT
+
+UPDATE B02_02_TT_PRICE_COMBINE_DATA
+SET ZF_EXCHANGE = 3.995205E-05 -- = 1/25030
+
+-- 2.2 ZF_ORDER_TYPE_ENG
+
+ALTER TABLE B02_02_TT_PRICE_COMBINE_DATA ADD ZF_ORDER_TYPE_ENG NVARCHAR(50)
+
+UPDATE B02_02_TT_PRICE_COMBINE_DATA
+SET ZF_ORDER_TYPE_ENG = 
+	CASE 
+		WHEN [Order Type] = 'T? d?ng' THEN 'Auto'
+		ELSE 'Manual'
+	END 
+
+-- 2.3 ZF_RETURN_BROKEN_PART_ENG
+
+ALTER TABLE B02_02_TT_PRICE_COMBINE_DATA ADD ZF_RETURN_BROKEN_PART_ENG NVARCHAR(50)
+
+UPDATE A
+SET A.ZF_RETURN_BROKEN_PART_ENG = B.ZF_RETURN_BROKEN_PART_ENG
+FROM B02_02_TT_PRICE_COMBINE_DATA A 
+	INNER JOIN PRICE_DIFF_FINAL B 
+		ON A.[Return the broken part] = B.[Return the broken part]
+
+
+-- 2.4 ZF_Note_ENG
+ALTER TABLE B02_02_TT_PRICE_COMBINE_DATA ADD ZF_Note_ENG  NVARCHAR(255)
+
+UPDATE A
+SET A.ZF_Note_ENG = B.ZF_Note_ENG
+FROM B02_02_TT_PRICE_COMBINE_DATA A 
+	INNER JOIN PRICE_DIFF_FINAL B 
+		ON A.Note = B.Note
+-- Update manually
+
+UPDATE B02_02_TT_PRICE_COMBINE_DATA
+SET ZF_Note_ENG ='How much does ASC actually collect from customers and what is the PO number?'
+WHERE NOTE = N'ASC ki?m tra th?c t? thu t? khách là bao nhiêu và s? PO nào ?'
+
+UPDATE B02_02_TT_PRICE_COMBINE_DATA
+SET ZF_Note_ENG ='Need to check PO number and actual amount collected from customer'
+WHERE NOTE = N'C?n ki?m tra s? PO và s? ti?n th?c t? thu c?a khách hàng'
+
+UPDATE B02_02_TT_PRICE_COMBINE_DATA
+SET ZF_Note_ENG ='Check PO number and actual amount collected from customer?'
+WHERE NOTE = N'Hãy ki?m tra s? PO và s? ti?n th?c t? thu t? khách hàng ?'
+
+UPDATE B02_02_TT_PRICE_COMBINE_DATA
+SET ZF_Note_ENG ='Need to check PO and actual amount collected from customer'
+WHERE NOTE = N'C?n ki?m tra PO và s? ti?n th?c t? thu du?c t? khách hàng'
+
+UPDATE B02_02_TT_PRICE_COMBINE_DATA
+SET ZF_Note_ENG ='No price found, PO is 36 months old'
+WHERE NOTE = N'Không tìm th?y giá,PO dã 36 tháng'
+
+-- Update ZF_L_LESS_THAN_J_FLAG
+
+ALTER TABLE B02_02_TT_PRICE_COMBINE_DATA ADD ZF_L_LESS_THAN_J_FLAG NVARCHAR(3)
+
+
+UPDATE B02_02_TT_PRICE_COMBINE_DATA
+SET ZF_L_LESS_THAN_J_FLAG = 'Yes'
+WHERE  
+(
+	[Selling price (Auto PO)] < [IW Claim amount]
+	OR 
+	([Selling price (Auto PO)] IS NULL AND [IW Claim amount] > 0)
+) 
+
+select COUNT(DISTINCT [Job number])
+FROM B02_02_TT_PRICE_COMBINE_DATA
+WHERE ZF_L_LESS_THAN_J_FLAG = 'YES'
+AND ZF_FLAG = 'OLD'
+
+ALTER TABLE B02_02_TT_PRICE_COMBINE_DATA ADD ZF_M_LESS_THAN_J_FLAG NVARCHAR(3)
+
+
+UPDATE B02_02_TT_PRICE_COMBINE_DATA
+SET ZF_M_LESS_THAN_J_FLAG = 'Yes'
+WHERE  
+    (
+		[Selling price (Manual PO)] < [IW Claim amount]
+			OR 
+		([Selling price (Manual PO)] IS NULL AND [IW Claim amount] > 0)
+    ) 
+
+
+select COUNT(DISTINCT [Job number])
+FROM B02_02_TT_PRICE_COMBINE_DATA
+WHERE ZF_M_LESS_THAN_J_FLAG = 'YES'
+AND ZF_FLAG = 'OLD'
+
+
+ALTER TABLE B02_02_TT_PRICE_COMBINE_DATA ADD ZF_GAP_LESS_THAN_0_FLAG NVARCHAR(3)
+
+UPDATE B02_02_TT_PRICE_COMBINE_DATA
+SET ZF_GAP_LESS_THAN_0_FLAG = 'Yes'
+WHERE [Difference] < 0
+
+
+
+select COUNT(DISTINCT [Job number])
+FROM B02_02_TT_PRICE_COMBINE_DATA
+WHERE ZF_GAP_LESS_THAN_0_FLAG = 'YES'
+AND ZF_FLAG = 'OLD'
+
+ALTER TABLE B02_02_TT_PRICE_COMBINE_DATA ADD  ZF_Y_N_FLAG NVARCHAR(3)
+
+
+UPDATE B02_02_TT_PRICE_COMBINE_DATA
+SET ZF_Y_N_FLAG = 'Yes'
+WHERE [Select Y or N] = 'Y'
+
+
+ALTER TABLE B02_02_TT_PRICE_COMBINE_DATA   ADD ZF_L_M_LESS_THAN_J NVARCHAR(3)
+
+UPDATE B02_02_TT_PRICE_COMBINE_DATA
+SET ZF_L_M_LESS_THAN_J = 'Yes'
+WHERE   ZF_M_LESS_THAN_J_FLAG = 'Yes'
+OR ZF_L_LESS_THAN_J_FLAG = 'YES'
+
+
+select COUNT(DISTINCT [Job number])
+FROM B02_02_TT_PRICE_COMBINE_DATA
+WHERE ZF_L_M_LESS_THAN_J = 'YES'
+AND ZF_FLAG = 'OLD'
+
+ALTER TABLE B02_02_TT_PRICE_COMBINE_DATA ADD ZF_KEY_COMBINE NVARCHAR(MAX)
+
+UPDATE B02_02_TT_PRICE_COMBINE_DATA
+SET ZF_KEY_COMBINE = 
+
+
+CONCAT(
+CAST ( [Source] AS NVARCHAR(1000) ) ,
+CAST ( [Select Y or N] AS NVARCHAR(1000) ) ,
+CAST ( [ASC Code] AS NVARCHAR(1000) ) ,
+CAST ( [ASC Name] AS NVARCHAR(1000) ) ,
+CAST ( [Job number] AS NVARCHAR(1000) ) ,
+CAST ( [Order Type] AS NVARCHAR(1000) ) ,
+CAST ( [Warranty/Charge] AS NVARCHAR(1000) ) ,
+CAST ( [Part code] AS NVARCHAR(1000) ) ,
+CAST ( [Part description] AS NVARCHAR(1000) ) ,
+CAST ( [Qty] AS NVARCHAR(1000) ) ,
+CAST ( [IW Claim amount] AS NVARCHAR(1000) ) ,
+CAST ( [OW Customer Claim] AS NVARCHAR(1000) ) ,
+CAST ( [Selling price (Auto PO)] AS NVARCHAR(1000) ) ,
+CAST ( [Selling price (Manual PO)] AS NVARCHAR(1000) ) ,
+CAST ( [Difference] AS NVARCHAR(1000) ) ,
+CAST ( [Price in job (Price x %VAT)] AS NVARCHAR(1000) ) ,
+CAST ( [Sony support (special)] AS NVARCHAR(1000) ) ,
+CAST ( [PO number] AS NVARCHAR(1000) ) ,
+CAST ( [Available PO Number] AS NVARCHAR(1000) ) ,
+CAST ( [Note] AS NVARCHAR(1000) ) ,
+CAST ( [Part type] AS NVARCHAR(1000) ) ,
+CAST ( [Part fee type] AS NVARCHAR(1000) ) ,
+CAST ( [Invoice number_NPC] AS NVARCHAR(1000) ) ,
+CAST ( [Invoice date] AS NVARCHAR(1000) ) ,
+CAST ( [Date of part release for job] AS NVARCHAR(1000) ) ,
+CAST ( [Repair completed date] AS NVARCHAR(1000) ) ,
+CAST ( [Repair Returned Date] AS NVARCHAR(1000) ) ,
+CAST ( [Payment request date] AS NVARCHAR(1000) ) ,
+CAST ( [Payment approval date] AS NVARCHAR(1000) ) ,
+CAST ( [Return the broken part] AS NVARCHAR(1000) ) ,
+CAST ( [Discount_code] AS NVARCHAR(1000) ) 
+
+
+)
+
+
+
+
+
+-- 63
+
+
+SELECT 92368 + 63
+
+SELECT 
+	DISTINCT *
+FROM B02_01_TT_PRICE_OLD_FILE
+
+SELECT 
+	ZF_KEY_COMBINE, COUNT(*) A
+FROM B02_02_TT_PRICE_COMBINE_DATA
+GROUP BY ZF_KEY_COMBINE 
+HAVING COUNT(*) > 1
+ORDER BY A DESC
+GO

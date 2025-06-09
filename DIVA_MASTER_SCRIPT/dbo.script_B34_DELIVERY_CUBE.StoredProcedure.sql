@@ -1,0 +1,304 @@
+USE [DIVA_MASTER_SCRIPT]
+GO
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+CREATE   PROCEDURE [dbo].[script_B34_DELIVERY_CUBE]
+AS
+
+	--DYNAMIC_SCRIPT_START
+/*  Change history comments
+	Update history 
+	-------------------------------------------------------
+	Date            | Who   |  Description 
+	23-03-2022	    | Thuan	| Remove MANDT field in join
+	07-08-2024		| H. Lam| Add fields and joins from SAP USAGE script_BO06_DELIVERY_DOC
+*/
+
+   DECLARE   
+       @CURRENCY NVARCHAR(MAX)      = (SELECT GLOBALS_VALUE FROM [AM_GLOBALS] WHERE GLOBALS_PARAMETER = 'currency')
+      ,@DATE1 NVARCHAR(MAX)       = (SELECT GLOBALS_VALUE FROM [AM_GLOBALS] WHERE GLOBALS_PARAMETER = 'date1')
+      ,@DATE2 NVARCHAR(MAX)       = (SELECT GLOBALS_VALUE FROM [AM_GLOBALS] WHERE GLOBALS_PARAMETER = 'date2')
+      ,@DOWNLOADDATE NVARCHAR(MAX)    = (SELECT GLOBALS_VALUE FROM [AM_GLOBALS] WHERE GLOBALS_PARAMETER = 'downloaddate')
+      ,@DATEFORMAT VARCHAR(3)             = (SELECT GLOBALS_VALUE FROM [AM_GLOBALS] WHERE GLOBALS_PARAMETER = 'dateformat')
+      ,@EXCHANGERATETYPE NVARCHAR(MAX)  = (SELECT GLOBALS_VALUE FROM [AM_GLOBALS] WHERE GLOBALS_PARAMETER = 'exchangeratetype')
+      ,@LANGUAGE1 NVARCHAR(MAX)     = (SELECT GLOBALS_VALUE FROM [AM_GLOBALS] WHERE GLOBALS_PARAMETER = 'language1')
+      ,@LANGUAGE2 NVARCHAR(MAX)     = (SELECT GLOBALS_VALUE FROM [AM_GLOBALS] WHERE GLOBALS_PARAMETER = 'language2')
+      ,@YEAR NVARCHAR(MAX)        = (SELECT GLOBALS_VALUE FROM [AM_GLOBALS] WHERE GLOBALS_PARAMETER = 'year')
+      ,@ID NVARCHAR(MAX)          = (SELECT GLOBALS_VALUE FROM [AM_GLOBALS] WHERE GLOBALS_PARAMETER = 'id')
+      ,@LIMIT_RECORDS INT               = CAST((SELECT GLOBALS_VALUE FROM [AM_GLOBALS] WHERE GLOBALS_PARAMETER = 'LIMIT_RECORDS') AS INT)
+      ,@ZV_LFA1_KTOKK_PERS INT                = (SELECT GLOBALS_VALUE FROM [AM_GLOBALS] WHERE GLOBALS_PARAMETER = 'ZV_LFA1_KTOKK_PERS')
+	  ,@ZV_KNA1_KTOKD_PERS INT                = (SELECT GLOBALS_VALUE FROM [AM_GLOBALS] WHERE GLOBALS_PARAMETER = 'ZV_KNA1_KTOKD_PERS')
+
+
+
+	EXEC SP_REMOVE_TABLES 'B34_01_IT_DELIVERY_DOCS'
+	SELECT 
+		   LIKP_MANDT, -- Client
+		   LIKP_VBELN, -- Delivery doc
+		   LIPS_POSNR, -- Delivery item
+		   LIKP_ERNAM, -- The user was created document
+		   LIKP_ERDAT, -- Entry date
+		   LIKP_BLDAT, -- Document date
+		   LIKP_BZIRK, -- Sale district
+		   LIKP_VSTEL, -- Shipping point
+		   LIPS_ERZET,
+		   LIKP_VKORG, -- Sale organization
+		   LIKP_LFART, -- Delivery type
+		   LIKP_ANZPK, -- Total number delivery package
+		   LIKP_WADAT, -- Planned good issue date
+		   LIKP_WADAT_IST, --Actual good issue date
+		   LIKP_KODAT, -- Picking date
+		   LIKP_LDDAT, -- Loading date
+		   LIKP_TDDAT, -- Transport date
+		   LIKP_LFDAT, -- Delivery date
+		   LIKP_LGNUM, -- Warehouse number
+		   T300T_LNUMT, -- Warehouse desc
+		   LIKP_LGTOR, -- Door number of warehouse
+		   T30BT_LTORT, -- Door WM desc
+		   LIKP_KUNNR, -- Customer (Ship-to-party)
+		   LIKP_KUNAG, -- Sold-to-party
+		   LIKP_INCO1, -- Incoterms
+		   LIKP_INCO2, -- Incoterms
+		   LIKP_ROUTE, -- Route
+		   TVROT_BEZEI, -- Route desc
+		   LIKP_VBTYP, -- SD document category
+		   LIKP_KDGRP, -- Customer group
+		   LIKP_BTGEW, -- Total weight
+		   LIKP_NTGEW, -- Net weight
+		   LIKP_GEWEI, -- Weight unit
+		   LIKP_VOLUM, -- Volume
+		   LIKP_VOLEH, -- Volume unit
+		   LIKP_LSTEL, -- Loading point
+		   TVLAT_VTEXT, -- Loading point desc
+		   LIKP_WAERK, -- SD document currency
+		   LIKP_VSART, --Shipping type
+		   LIPS_ERNAM, -- User name
+		   LIPS_ERDAT, -- Item date
+		   LIPS_PSTYV, -- Deliery item category
+		   LIPS_MATNR, -- Material nr
+		   LIPS_MATKL, -- Material group
+		   T023T_WGBEZ, -- Material group desc
+		   LIPS_WERKS, -- Plant
+		   LIPS_LGORT, --Storage location
+		   T001L_LGOBE, -- Storage location text
+		   LIPS_LFIMG, -- Quantity
+		   LIPS_VRKME, -- Sale unit
+		   A_T006A.T006A_MSEHT ZF_VRKME_MSEHT, -- Unit desc
+		   LIPS_ARKTX, -- Material text
+		   LIPS_BRGEW, --Gross weight
+		   LIPS_GEWEI, --Weight unit
+		   A_T006A_WEIGHT_UINT.T006A_MSEHT ZF_GEWEI_MSEHT, -- Weight unit
+		   LIPS_VGBEL,
+		   LIPS_VGPOS,
+		   LIPS_VGTYP,
+		   LIKP_TCODE, --Transaction code
+		   B00_DD07T_VBTYP.DD07T_DDTEXT ZF_VBTYP_DESC, --Preceding document category	   
+		   A_KNA1_KUNNR.KNA1_NAME1 KNA1_NAME1_KUNNR,
+		    A_KNA1_KUNNR.KNA1_ERDAT,
+		    A_KNA1_KUNNR.KNA1_STRAS,
+		    A_KNA1_KUNNR.KNA1_LAND1,
+		    A_KNA1_KUNNR.KNA1_PSTLZ,
+		    A_KNA1_KUNNR.KNA1_ORT01,
+		    A_KNA1_KUNNR.KNA1_ERNAM,
+			A_KNA1_KUNAG.KNA1_NAME1 KNA1_NAME1_KUNAG,
+			-- Hanh Lam: Add fields from SAP USAGE ZF_KNA1_ERDAT_SHIP_TO, ZF_KNA1_ERNAM_SHIP_TO, ZF_KNA1_ERDAT_SOLD_TO, ZF_KNA1_ERNAM_SOLD_TO
+			A_KNA1_KUNNR.KNA1_ERDAT AS ZF_KNA1_ERDAT_SHIP_TO,
+			A_KNA1_KUNNR.KNA1_ERNAM AS ZF_KNA1_ERNAM_SHIP_TO,
+			A_KNA1_KUNNR.KNA1_NAME1 AS ZF_KNA1_NAME1_SHIP_TO, -- HL: Added from SAP USAGE
+			A_KNA1_KUNAG.KNA1_ERDAT AS ZF_KNA1_ERDAT_SOLD_TO,
+			A_KNA1_KUNAG.KNA1_ERNAM AS ZF_KNA1_ERNAM_SOLD_TO,
+			A_KNA1_KUNAG.KNA1_NAME1 AS ZF_KNA1_NAME1_SOLD_TO,-- HL: Added from SAP USAGE
+		   TVAPT_VTEXT, -- Delivery category desc
+		   TVLKT_VTEXT, -- Delivery type desc
+		   T171T_BZTXT, -- Sales district desc
+		   TVKOT_VTEXT, -- Sale organization desc,
+		   B00_TVKO.TVKO_BUKRS,
+		   T151T_KTEXT, -- Customer group desc
+		   B00_DD07T_VGTYP.DD07T_DDTEXT ZF_VGTYP_DESC, -- SD document type desc
+		   LIPS_NETWR*ISNULL(TCURX_FACTOR,1)  AS ZF_LIPS_NETWR,
+		     LIPS_NETWR*ISNULL(TCURX_FACTOR,1)*COALESCE(CAST(TCURR_COC.TCURR_UKURS AS FLOAT),1) * COALESCE(TCURF_COC.TCURF_TFACT,1) /
+		   COALESCE(TCURF_COC.TCURF_FFACT,1) AS ZF_LIPS_NETWR_COC,
+		   LIPS_NETWR*ISNULL(TCURX_FACTOR,1)*COALESCE(CAST(TCURR_COC.TCURR_UKURS AS FLOAT),1) * COALESCE(TCURF_COC.TCURF_TFACT,1) /
+		   COALESCE(TCURF_COC.TCURF_FFACT,1) * COALESCE(CAST(TCURR_CUC.TCURR_UKURS AS FLOAT),1) * COALESCE(TCURF_CUC.TCURF_TFACT,1) / COALESCE(TCURF_CUC.TCURF_FFACT,1) AS ZF_LIPS_NETWR_CUC,		   @CURRENCY AS ZF_CUSTOM_CURRENCY,
+			   T001_WAERS,
+		   A_T173T.T173T_BEZEI, -- Shipping type desc
+		   B00_USR_INFO_HEADER.V_USERNAME_NAME_TEXT ZF_LIKP_ERNAM_TEXT, -- User name which was create header of document
+		   B00_USR_INFO_ITEM.V_USERNAME_NAME_TEXT ZF_LIPS_ERNAM_TEXT, -- User name which was create item of document
+		   CONCAT(LIKP_MANDT,'|',LIKP_VBELN,'|',CAST(LIPS_POSNR AS INT)) ZF_SALE_DELIVERY_DOC_KEY,
+		   --sales order is required as basis for delivery (test 19)
+			A_TVLK.TVLK_AUFER, -- Hanh Lam added from  SAP USAGE
+			B00_USR_INFO_HEADER.V_USERNAME_NAME_TEXT AS V_USERNAME_NAME_TEXT, -- Hanh Lam added from SAP USAGE
+			MAKT_MAKTX -- Hanh Lam added from SAP USAGE
+		   
+	INTO B34_01_IT_DELIVERY_DOCS
+	FROM A_LIKP
+	INNER JOIN A_LIPS
+	ON LIKP_VBELN = LIPS_VBELN
+	--Get currency
+	LEFT JOIN B00_TCURX B00_TCURX_DOC
+	ON B00_TCURX_DOC.TCURX_CURRKEY = LIKP_WAERK COLLATE SQL_Latin1_General_CP1_CS_AS
+	--Only keep all sale organization relate to company code in the BKPF/BSEG cube
+	INNER JOIN B00_TVKO
+	ON LIKP_VKORG = TVKO_VKORG
+
+	LEFT JOIN A_T001 
+	ON TVKO_BUKRS= A_T001.T001_BUKRS
+
+
+--- Add exchange rate factors based on document currency
+	LEFT JOIN B00_IT_TCURF TCURF_COC
+	ON LIKP_WAERK = TCURF_COC.TCURF_FCURR
+	AND TCURF_COC.TCURF_TCURR  = A_T001.T001_WAERS
+	AND TCURF_COC.TCURF_GDATU = (
+		SELECT TOP 1 B00_IT_TCURF.TCURF_GDATU
+		FROM B00_IT_TCURF
+		WHERE LIKP_WAERK = B00_IT_TCURF.TCURF_FCURR AND 
+				B00_IT_TCURF.TCURF_TCURR  = A_T001.T001_WAERS  AND
+				B00_IT_TCURF.TCURF_GDATU <= LIKP_ERDAT
+		ORDER BY B00_IT_TCURF.TCURF_GDATU DESC
+		)
+	-- Add exchange rate from document currency to company currency
+	LEFT JOIN B00_IT_TCURR TCURR_COC
+		ON LIKP_WAERK = TCURR_COC.TCURR_FCURR
+		AND TCURR_COC.TCURR_TCURR  = A_T001.T001_WAERS
+		AND TCURR_COC.TCURR_GDATU = (
+			SELECT TOP 1 B00_IT_TCURR.TCURR_GDATU
+			FROM B00_IT_TCURR
+			WHERE LIKP_WAERK = B00_IT_TCURR.TCURR_FCURR AND 
+					B00_IT_TCURR.TCURR_TCURR  = A_T001.T001_WAERS AND
+					B00_IT_TCURR.TCURR_GDATU <= LIKP_ERDAT
+			ORDER BY B00_IT_TCURR.TCURR_GDATU DESC
+			)
+--- Add exchange rate factors based on company currency
+	LEFT JOIN B00_IT_TCURF TCURF_CUC
+	ON A_T001.T001_WAERS = TCURF_CUC.TCURF_FCURR
+	AND TCURF_CUC.TCURF_TCURR  = @CURRENCY
+	AND TCURF_CUC.TCURF_GDATU = (
+		SELECT TOP 1 B00_IT_TCURF.TCURF_GDATU
+		FROM B00_IT_TCURF
+		WHERE A_T001.T001_WAERS = B00_IT_TCURF.TCURF_FCURR AND 
+				B00_IT_TCURF.TCURF_TCURR  = @CURRENCY AND
+				B00_IT_TCURF.TCURF_GDATU <= LIKP_ERDAT
+		ORDER BY B00_IT_TCURF.TCURF_GDATU DESC
+		)
+-- Add exchange rate from company currency to USD
+	LEFT JOIN B00_IT_TCURR TCURR_CUC
+		ON A_T001.T001_WAERS = TCURR_CUC.TCURR_FCURR
+		AND TCURR_CUC.TCURR_TCURR  = @currency  
+		AND TCURR_CUC.TCURR_GDATU = (
+			SELECT TOP 1 B00_IT_TCURR.TCURR_GDATU
+			FROM B00_IT_TCURR
+			WHERE A_T001.T001_WAERS = B00_IT_TCURR.TCURR_FCURR AND 
+					B00_IT_TCURR.TCURR_TCURR  = @currency  AND
+					B00_IT_TCURR.TCURR_GDATU <= LIKP_ERDAT
+			ORDER BY B00_IT_TCURR.TCURR_GDATU DESC
+			) 
+
+
+	--Get customer information (Ship to party)
+	LEFT JOIN A_KNA1 AS A_KNA1_KUNNR
+	ON LIKP_KUNNR = A_KNA1_KUNNR.KNA1_KUNNR
+	--Get customer information (Sold to party)
+	LEFT JOIN A_KNA1 AS A_KNA1_KUNAG
+	ON LIKP_KUNAG = A_KNA1_KUNAG.KNA1_KUNNR
+
+	--Get delivery item category desc
+	LEFT JOIN A_TVAPT
+	ON TVAPT_SPRAS IN ('E', 'EN')
+	AND TVAPT_PSTYV = LIPS_PSTYV COLLATE SQL_Latin1_General_CP1_CS_AS
+
+	--Get delivery type desc
+	LEFT JOIN A_TVLKT
+	ON  TVLKT_SPRAS IN ('E', 'EN')
+	AND TVLKT_LFART = LIKP_LFART COLLATE SQL_Latin1_General_CP1_CS_AS
+
+	--Get sales district desc
+	LEFT JOIN A_T171T
+	ON T171T_SPRAS IN ('E', 'EN')
+	AND T171T_BZIRK = LIKP_BZIRK COLLATE SQL_Latin1_General_CP1_CS_AS
+
+	--Sale organization desc
+	LEFT JOIN A_TVKOT
+	ON  TVKOT_SPRAS IN ('E', 'EN')
+	AND LIKP_VKORG = TVKOT_VKORG COLLATE SQL_Latin1_General_CP1_CS_AS
+
+	--Get route desc
+	LEFT JOIN A_TVROT
+	ON  TVROT_SPRAS IN ('E','EN')
+	AND LIKP_ROUTE = TVROT_ROUTE COLLATE SQL_Latin1_General_CP1_CS_AS
+
+	--Get customer group desc
+	LEFT JOIN A_T151T
+	ON  T151T_SPRAS IN ('E', 'EN')
+	AND LIKP_KDGRP = T151T_KDGRP COLLATE SQL_Latin1_General_CP1_CS_AS
+
+	--Get loading point desc
+	LEFT JOIN A_TVLAT
+	ON  TVLAT_SPRAS IN ('E','EN')
+	AND LIKP_LSTEL= TVLAT_LSTEL
+	AND TVLAT_VSTEL = LIKP_VSTEL COLLATE SQL_Latin1_General_CP1_CS_AS
+
+
+	--Get shipping type desc
+	LEFT JOIN A_T173T
+	ON  T173T_SPRAS IN ('E', 'EN')
+	AND T173T_VSART = LIKP_VSART COLLATE SQL_Latin1_General_CP1_CS_AS
+
+	--Get warehouse desc
+	LEFT JOIN A_T300T
+	ON  T300T_SPRAS IN ('E', 'EN')
+	AND T300T_LGNUM = LIKP_LGNUM COLLATE SQL_Latin1_General_CP1_CS_AS
+
+	--Get warehouse door number
+	LEFT JOIN A_T30BT
+	ON  T30BT_SPRAS IN ('E', 'EN')
+	AND T30BT_LGNUM = LIKP_LGNUM COLLATE SQL_Latin1_General_CP1_CS_AS
+	AND T30BT_LGTOR = LIKP_LGTOR COLLATE SQL_Latin1_General_CP1_CS_AS
+
+	----Get SD document categroy
+	LEFT JOIN B00_DD07T_VBTYP
+	ON B00_DD07T_VBTYP.DD07T_DOMVALUE_L = LIKP_VBTYP COLLATE SQL_Latin1_General_CP1_CS_AS --The current collation is not case sensitive so we need this statement to make the WHERE condition case sensitive
+
+	--Get user info which was created header
+	LEFT JOIN A_V_USERNAME B00_USR_INFO_HEADER
+	ON  LIKP_ERNAM = B00_USR_INFO_HEADER.V_USERNAME_BNAME
+
+	--Get user info which was create detail item
+	LEFT JOIN A_V_USERNAME B00_USR_INFO_ITEM
+	ON  LIPS_ERNAM = B00_USR_INFO_ITEM.V_USERNAME_BNAME
+
+	--Get sale unit
+	LEFT JOIN A_T006A
+	ON  A_T006A.T006A_SPRAS IN ('E', 'EN')
+	AND LIPS_VRKME = A_T006A.T006A_MSEHI COLLATE SQL_Latin1_General_CP1_CS_AS
+
+	--Get weight unit
+	LEFT JOIN A_T006A A_T006A_WEIGHT_UINT
+	ON  A_T006A_WEIGHT_UINT.T006A_SPRAS IN ('E', 'EN')
+	AND LIPS_GEWEI = A_T006A_WEIGHT_UINT.T006A_MSEHI COLLATE SQL_Latin1_General_CP1_CS_AS
+
+	--Get preceding document category
+	LEFT JOIN B00_DD07T_VBTYP B00_DD07T_VGTYP
+	ON B00_DD07T_VGTYP.DD07T_DOMVALUE_L = LIPS_VGTYP COLLATE SQL_Latin1_General_CP1_CS_AS --The current collation is not case sensitive so we need this statement to make the WHERE condition case sensitive
+
+	--Get storage location
+	LEFT JOIN A_T001L
+	ON  LIPS_WERKS = T001L_WERKS COLLATE SQL_Latin1_General_CP1_CS_AS
+	AND LIPS_LGORT = T001L_LGORT COLLATE SQL_Latin1_General_CP1_CS_AS
+	-- Hanh Lam added from SAP USAGE: Get sales order is required as basis for delivery description
+	LEFT JOIN A_TVLK
+	ON LIKP_LFART = TVLK_LFART
+	--Get materia group desc
+	LEFT JOIN A_T023T
+	ON  T023T_SPRAS IN ('E', 'EN')
+	AND T023T_MATKL = LIPS_MATKL COLLATE SQL_Latin1_General_CP1_CS_AS
+	LEFT JOIN A_MARA
+	ON LIPS_MATNR = MARA_MATNR
+	LEFT JOIN A_MAKT
+	ON MARA_MATNR = MAKT_MATNR
+
+	EXEC SP_RENAME_FIELD 'B34_',B34_01_IT_DELIVERY_DOCS
+	--EXEC SP_REMOVE_TABLES '%_TT_%'
+GO

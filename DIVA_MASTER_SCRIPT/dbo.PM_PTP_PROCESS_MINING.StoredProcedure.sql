@@ -1,0 +1,38 @@
+USE [DIVA_MASTER_SCRIPT]
+GO
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+-- =============================================
+-- Author:		<Author,,Name>
+-- Create date: <Create Date,,>
+-- Description:	<Description,,>
+-- =============================================
+CREATE   PROCEDURE [dbo].[PM_PTP_PROCESS_MINING]
+	-- Add the parameters for the stored procedure here
+	--To run this script
+	--We need to run all the PTP script first
+	--Create an AM_COMPANY_CODE to limit the number of company code
+	 @DBNAME as NVARCHAR(MAX)
+AS
+BEGIN
+	EXEC SP_REMOVE_TABLES_MASTER @DBNAME, 'B21_%'
+	EXEC SP_REMOVE_TABLES_MASTER @DBNAME, 'B24_%'
+	EXEC SP_REMOVE_TABLES_MASTER @DBNAME,  'B11_SS02_%'
+	
+--	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_B21_CHANGE_DOCUMENT_CUBE'
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_B21_CHANGE_DOCUMENT_CUBE_V2'
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_B24_MATERIAL_MOVEMENT_CUBE'
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_B23_PTP_PURCHASE_REQUEST'
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_B09_SS02_ADD_USER_PO'
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_B11_SS02_ADD_USER_INV_PAY'
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_B25A_BSEG_BKPF_INVOICES'
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_B25_PTP_GLOBAL_CUBES'
+--	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_PM01_PROCESS_MINING'
+--	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_PM01_GLOBAL_TABLE'
+--	EXEC SP_EXEC_DYNAMIC @DBNAME,'script_PM02_PROCESS_MINING'
+
+END
+
+GO

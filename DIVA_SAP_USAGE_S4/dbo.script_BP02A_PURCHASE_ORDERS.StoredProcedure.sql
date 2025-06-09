@@ -1,0 +1,232 @@
+USE [DIVA_SAP_USAGE_S4]
+GO
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+
+CREATE        PROCEDURE [dbo].[script_BP02A_PURCHASE_ORDERS]
+WITH EXECUTE AS CALLER
+AS
+--DYNAMIC_SCRIPT_START
+/* Initiate the log */  
+--Create database log table if it does not exist
+IF OBJECT_ID('LOG_SP_EXECUTION', 'U') IS NULL BEGIN CREATE TABLE [DBO].[LOG_SP_EXECUTION] ([DATABASE] NVARCHAR(MAX) NULL,[OBJECT] NVARCHAR(MAX) NULL,[OBJECT_TYPE] NVARCHAR(MAX) NULL,[USER] NVARCHAR(MAX) NULL,[DATE] DATE NULL,[TIME] TIME NULL,[DESCRIPTION] NVARCHAR(MAX) NULL,[TABLE] NVARCHAR(MAX),[ROWS] INT) END
+
+--Log start of procedure
+INSERT INTO [DBO].[LOG_SP_EXECUTION] ([DATABASE],[OBJECT],[OBJECT_TYPE],[USER],[DATE],[TIME],[DESCRIPTION],[TABLE],[ROWS])
+SELECT DB_NAME(),OBJECT_NAME(@@PROCID),'P',SYSTEM_USER,CONVERT(DATE,GETDATE()),CONVERT(TIME,GETDATE()),'Procedure started',NULL,NULL
+
+/* Initialize parameters from globals table */
+
+     DECLARE 	 
+			 @CURRENCY NVARCHAR(MAX)			= (SELECT GLOBALS_VALUE FROM [AM_GLOBALS] WHERE GLOBALS_PARAMETER = 'currency')
+			,@DATE1 NVARCHAR(MAX)				= (SELECT GLOBALS_VALUE FROM [AM_GLOBALS] WHERE GLOBALS_PARAMETER = 'date1')
+			,@DATE2 NVARCHAR(MAX)				= (SELECT GLOBALS_VALUE FROM [AM_GLOBALS] WHERE GLOBALS_PARAMETER = 'date2')
+			,@DOWNLOADDATE NVARCHAR(MAX)		= (SELECT GLOBALS_VALUE FROM [AM_GLOBALS] WHERE GLOBALS_PARAMETER = 'downloaddate')
+			,@DATEFORMAT VARCHAR(3)             = (SELECT GLOBALS_VALUE FROM [AM_GLOBALS] WHERE GLOBALS_PARAMETER = 'dateformat')
+			,@EXCHANGERATETYPE NVARCHAR(MAX)	= (SELECT GLOBALS_VALUE FROM [AM_GLOBALS] WHERE GLOBALS_PARAMETER = 'exchangeratetype')
+			,@LANGUAGE1 NVARCHAR(MAX)			= (SELECT GLOBALS_VALUE FROM [AM_GLOBALS] WHERE GLOBALS_PARAMETER = 'language1')
+			,@LANGUAGE2 NVARCHAR(MAX)			= (SELECT GLOBALS_VALUE FROM [AM_GLOBALS] WHERE GLOBALS_PARAMETER = 'language2')
+			,@YEAR NVARCHAR(MAX)				= (SELECT GLOBALS_VALUE FROM [AM_GLOBALS] WHERE GLOBALS_PARAMETER = 'year')
+			,@ID NVARCHAR(MAX)					= (SELECT GLOBALS_VALUE FROM [AM_GLOBALS] WHERE GLOBALS_PARAMETER = 'id')
+			,@LIMIT_RECORDS INT		            = CAST((SELECT GLOBALS_VALUE FROM [AM_GLOBALS] WHERE GLOBALS_PARAMETER = 'LIMIT_RECORDS') AS INT)
+
+
+/*Test mode*/
+
+SET ROWCOUNT @LIMIT_RECORDS
+
+
+/*Change history comments*/
+
+/*Change history comments*/
+
+/*
+	Title			:	BP02A: PURCHASE ORDERS
+	  
+	--------------------------------------------------------------
+	Update history
+	--------------------------------------------------------------
+	Date		    | Who |	Description
+	06/10/2022        KHOA   First version
+*/
+/*--Step 1
+--  Unique list of exchange rate conversion factors:
+	-- During the conversion from document currency to house currency, the following formula will be applied:
+	     PO amount in document currency (EKPO_NETWR) * (PO exchange rate (EKKO_WKURS)* (exchange rate factor (TCURX_FACTOR)/Exchange rate conversion factor (TCURR_FFACT)))
+-- Only the exchange rate conversion factors 'M' (average) and those that are effective (GDATU) are used
+-- Only the exchange rates to (TCURR_TCURR) house currency (T001_WAERS) for company codes in scope are kept
+-- $$ to be checked: why is the exchange rate table used for purchase orders but not for BSAK_WRBTR?
+*/	
+
+
+-- Step 1: create PO cube
+EXEC SP_DROPTABLE 'BP02A_01_IT_POS'
+
+	SELECT
+		A_EKKO.EKKO_MANDT,
+		A_EKPO.EKPO_MEINS,
+		A_EKPO.EKPO_BUKRS,
+		A_EKKO.EKKO_BSART,
+		AM_SCOPE.SCOPE_BUSINESS_DMN_L1,
+		AM_SCOPE.SCOPE_BUSINESS_DMN_L2,
+		A_T001.T001_BUTXT,
+		A_EKKO.EKKO_BSTYP,
+		A_EKPO.EKPO_LOEKZ,
+		A_EKKO.EKKO_LOEKZ,
+		A_EKKO.EKKO_EBELN,
+		A_EKPO.EKPO_EBELP,
+		A_EKPO.EKPO_TXZ01,
+		A_EKKO.EKKO_AEDAT,
+		A_EKKO.EKKO_LIFNR,
+		A_EKPO.EKPO_INFNR,
+		A_EKPO.EKPO_WERKS,
+		A_T001W.T001W_NAME1,
+		A_EKKO.EKKO_EKORG,
+		A_T024E.T024E_EKOTX,
+		A_EKKO.EKKO_RESWK,
+		A_EKKO.EKKO_EKGRP,
+		A_T024.T024_EKNAM,
+		A_EKKO.EKKO_BEDAT,
+		A_EKPO.EKPO_EBELN,
+		A_EKPO.EKPO_MENGE,
+		A_EKKO.EKKO_ERNAM,
+		A_LFA1.LFA1_LIFNR,
+		A_LFA1.LFA1_NAME1,
+		COALESCE(A_V_USERNAME.V_Username_NAME_TEXT,'SRM user only') AS ZF_V_USERNAME_NAME_TEXT, 
+		COALESCE (B00_USR02.USR02_USTYP,'')			AS USR02_USTYP,
+		COALESCE(A_EKPO.EKPO_MATNR,'')		AS EKPO_MATNR,
+		COALESCE (B00_MAKT.MAKT_MAKTX,'')		AS MAKT_MAKTX,
+		COALESCE(A_MARA.MARA_MTART,'')		AS MARA_MTART,     
+		COALESCE(A_EKPO.EKPO_MATKL, '')		AS EKPO_MATKL,
+		--Add the DIVISION
+		COALESCE(A_MARA.MARA_SPART,'') AS MARA_SPART,
+		--hard-coded definition of PO category
+		-- Logic for Sony spend categorisation. based on lINkINg material group to global procurement category structure
+		A_EKKO.EKKO_WAERS,
+		CONVERT(money,A_EKPO.EKPO_NETPR * COALESCE(TCURX_DOC.TCURX_FACTOR,1))												AS ZF_EKPO_NETPR_TCURFA,
+		A_EKPO.EKPO_NETPR,
+		A_EKPO.EKPO_PEINH,
+		A_EKPO.EKPO_NETWR,
+		A_EKPO.EKPO_BRTWR,
+		CONVERT(money,A_EKPO.EKPO_NETWR * COALESCE(TCURX_DOC.TCURX_FACTOR,1))												AS ZF_EKPO_NETWR_TCURFA,
+		A_T001.T001_WAERS,																									
+        -- For consistency, the conversion is done with the exchange rates table, as this is how it is done in the rest of the SQL scripts
+	
+	  -- For consistency, the conversion is done with the exchange rates table, as this is how it is done in the rest of the SQL scripts
+	
+		CONVERT(money,(A_EKPO.EKPO_NETWR * COALESCE(TCURX_DOC.TCURX_FACTOR,1) * A_EKKO.EKKO_WKURS * COALESCE(TCURF_COC.TCURF_TFACT,1))/COALESCE(TCURF_COC.TCURF_FFACT,1))	AS ZF_EKPO_NETWR_COC,  
+		
+		@currency																										AS AM_GLOBALS_CURRENCY, 
+
+		CONVERT(money,(A_EKPO.EKPO_NETWR * COALESCE(TCURX_DOC.TCURX_FACTOR,1) * A_EKKO.EKKO_WKURS * COALESCE(TCURF_COC.TCURF_TFACT,1))/COALESCE(TCURF_COC.TCURF_FFACT,1) 
+		* COALESCE(CAST(TCURR_CUC.TCURR_UKURS AS FLOAT),1) * COALESCE(TCURF_CUC.TCURF_TFACT,1) / COALESCE(TCURF_CUC.TCURF_FFACT,1))	AS ZF_EKPO_NETWR_CUC,
+				
+		A_EKPO.EKPO_PSTYP,
+		COALESCE(A_EKPO.EKPO_RETPO,'')			AS EKPO_RETPO,
+
+		-- account assignment info
+		A_EKPO.EKPO_KNTTP
+
+	 
+	INTO BP02A_01_IT_POS
+    
+	FROM A_EKKO
+
+	-- Select from PO header/line items
+	INNER JOIN A_EKPO
+	ON  A_EKKO.EKKO_EBELN = A_EKPO.EKPO_EBELN
+
+    -- Limit to purchase orders found in the company codes in scope
+	INNER JOIN AM_SCOPE
+	ON A_EKKO.EKKO_BUKRS = AM_SCOPE.SCOPE_CMPNY_CODE
+		
+    -- Add the house currency code
+	LEFT JOIN A_T001
+		ON  A_EKPO.EKPO_BUKRS = A_T001.T001_BUKRS
+
+	-- Add user account names
+	LEFT JOIN A_V_USERNAME 
+		ON  A_EKKO.EKKO_ERNAM = A_V_USERNAME.V_USERNAME_BNAME
+	
+	-- Add user account types
+	LEFT JOIN B00_USR02
+		ON A_EKKO.EKKO_ERNAM = B00_USR02.USR02_BNAME
+	
+	-- Add descriptions of plant codes
+	LEFT JOIN A_T001W
+		ON A_EKPO.EKPO_WERKS = A_T001W.T001W_WERKS  
+	
+	-- Add descriptions of purchasing groups
+	LEFT JOIN A_T024
+		ON A_EKKO.EKKO_EKGRP = A_T024.T024_EKGRP  
+	
+	-- Add descriptions of purchasing organisations
+	LEFT JOIN A_T024E
+		ON A_EKKO.EKKO_EKORG = A_T024E.T024E_EKORG
+	
+	LEFT JOIN A_LFA1
+		ON A_LFA1.LFA1_LIFNR = A_EKKO.EKKO_LIFNR
+		
+	-- Add the material master data for the division business segment
+	LEFT JOIN A_MARA
+		ON A_EKPO.EKPO_MATNR = A_MARA.MARA_MATNR 
+		
+	-- Add the material descriptions
+	LEFT JOIN B00_MAKT
+		ON A_EKPO.EKPO_MATNR = B00_MAKT.MAKT_MATNR
+		
+
+-- Add the currency conversion factor: for document currency
+	LEFT JOIN B00_TCURX TCURX_DOC
+		ON 
+		 A_EKKO.EKKO_WAERS = TCURX_DOC.TCURX_CURRKEY
+
+	-- Add currency factor from company currency to USD
+
+	LEFT JOIN B00_IT_TCURF TCURF_CUC
+	ON A_T001.T001_WAERS = TCURF_CUC.TCURF_FCURR
+	AND TCURF_CUC.TCURF_TCURR  = @currency  
+	AND TCURF_CUC.TCURF_GDATU = (
+		SELECT TOP 1 B00_IT_TCURF.TCURF_GDATU
+		FROM B00_IT_TCURF
+		WHERE A_T001.T001_WAERS = B00_IT_TCURF.TCURF_FCURR AND 
+				B00_IT_TCURF.TCURF_TCURR  = @currency  AND
+				B00_IT_TCURF.TCURF_GDATU <= EKKO_BEDAT
+		ORDER BY B00_IT_TCURF.TCURF_GDATU DESC
+		)
+	-- Add exchange rate from company currency to USD
+	LEFT JOIN B00_IT_TCURR TCURR_CUC
+		ON A_T001.T001_WAERS = TCURR_CUC.TCURR_FCURR
+		AND TCURR_CUC.TCURR_TCURR  = @currency  
+		AND TCURR_CUC.TCURR_GDATU = (
+			SELECT TOP 1 B00_IT_TCURR.TCURR_GDATU
+			FROM B00_IT_TCURR
+			WHERE A_T001.T001_WAERS = B00_IT_TCURR.TCURR_FCURR AND 
+					B00_IT_TCURR.TCURR_TCURR  = @currency  AND
+					B00_IT_TCURR.TCURR_GDATU <= EKKO_BEDAT
+			ORDER BY B00_IT_TCURR.TCURR_GDATU DESC
+			) 
+
+	-- Add currency factor from document currency to local currency
+
+	LEFT JOIN B00_IT_TCURF TCURF_COC
+	ON EKKO_WAERS = TCURF_COC.TCURF_FCURR
+	AND TCURF_COC.TCURF_TCURR  = T001_WAERS  
+	AND TCURF_COC.TCURF_GDATU = (
+		SELECT TOP 1 B00_IT_TCURF.TCURF_GDATU
+		FROM B00_IT_TCURF
+		WHERE EKKO_WAERS = B00_IT_TCURF.TCURF_FCURR AND 
+				B00_IT_TCURF.TCURF_TCURR  = T001_WAERS  AND
+				B00_IT_TCURF.TCURF_GDATU <= EKKO_BEDAT
+		ORDER BY B00_IT_TCURF.TCURF_GDATU DESC
+		)
+  
+	  
+EXEC SP_RENAME_FIELD 'BP02A_01_', 'BP02A_01_IT_POS'
+
+
+
+
+GO

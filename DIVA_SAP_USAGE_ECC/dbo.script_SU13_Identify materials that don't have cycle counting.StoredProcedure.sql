@@ -1,0 +1,37 @@
+USE [DIVA_SAP_USAGE_ECC]
+GO
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+CREATE PROCEDURE [dbo].[script_SU13_Identify materials that don't have cycle counting]
+WITH EXECUTE AS CALLER
+AS
+--DYNAMIC_SCRIPT_START
+
+--Objective: Identify which plants and material numbers don't have cyclical count configuration. 
+
+--- Step 1/ Flag the Cyclical counting table on plants that have cyclical counting
+
+EXEC SP_DROPTABLE SU13_01_RT_T159C_ABCIN_FLG;
+SELECT
+	*,
+	T159C_WERKS+'-'+ISNULL(T001W_NAME1,'') AS ZF_T159C_WERKS_DESC,
+	IIF(T159C_ABCIN = '' OR LEN(TRIM(T159C_ABCIN))=0, 'No', 'Yes') AS ZF_T159C_ABCIN_DESC
+INTO SU13_01_RT_T159C_ABCIN_FLG
+FROM A_T159C
+LEFT JOIN A_T001W
+ON T159C_WERKS = T001W_WERKS;
+
+---Step 2/ Flag the materials per plant code (MARC) on whether or not there is cyclical inventory
+
+EXEC SP_DROPTABLE SU13_02_RT_MARC_ABCIN_FLG
+SELECT DISTINCT *,
+  IIF(MARC_ABCIN = ' ' OR LEN(TRIM(MARC_ABCIN))=0, 'No', 'Yes') AS ZF_MARC_ABCIN_DESC
+INTO SU13_02_RT_MARC_ABCIN_FLG
+FROM BC25_01_IT_MARC_T001W_MAKT_DESC;
+
+
+EXEC SP_RENAME_FIELD 'SU13_01_','SU13_01_RT_T159C_ABCIN_FLG';
+EXEC SP_RENAME_FIELD 'SU13_02_','SU13_02_RT_MARC_ABCIN_FLG';
+GO

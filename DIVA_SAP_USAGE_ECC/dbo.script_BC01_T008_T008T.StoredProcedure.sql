@@ -1,0 +1,33 @@
+USE [DIVA_SAP_USAGE_ECC]
+GO
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+CREATE PROCEDURE [dbo].[script_BC01_T008_T008T]
+AS 
+--DYNAMIC_SCRIPT_START
+BEGIN 
+
+--Script objective : Create the cube for blocking reasone
+
+--Step 1 Get the information about blocking reason
+--Add the description for blocking reason 
+EXEC SP_DROPTABLE BC01_01_IT_T008_T008T
+SELECT  A_T008.T008_ZAHLS,
+		A_T008.T008_CHAR1,
+		A_T008.T008_XOZSP,
+		A_T008.T008_XNCHG
+		,T008T_TEXTL
+INTO BC01_01_IT_T008_T008T
+FROM A_T008
+--Add the description for blocking reason 
+	LEFT JOIN A_T008T 
+ON T008_ZAHLS=T008T_ZAHLS AND T008T_SPRAS='EN'
+
+
+--Rename the fields
+EXEC SP_RENAME_FIELD 'BC01_01_', 'BC01_01_IT_T008_T008T'
+
+END
+GO

@@ -1,0 +1,289 @@
+USE [DIVA_SEV_WARRANTY_JULY_21_JUNE_23]
+GO
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+CREATE     PROC [dbo].[B06_RE_REPAIR_ANALYSIS]
+AS
+
+
+
+
+-- Step 1 /  Re-repair full  
+-- 1.1 
+
+
+
+ALTER TABLE B01_04_IT_WARRANTY_FINAL_DATA ADD ZF_JOB_RELATED_RE_REPAIR NVARCHAR(3)
+
+
+
+UPDATE B01_04_IT_WARRANTY_FINAL_DATA
+SET ZF_JOB_RELATED_RE_REPAIR = 'No'
+
+
+UPDATE B01_04_IT_WARRANTY_FINAL_DATA
+SET ZF_JOB_RELATED_RE_REPAIR = 'Yes'
+WHERE [Model Code]+[Serial No] IN
+(
+	
+	SELECT [Model Code]+[Serial No] FROM B01_04_IT_WARRANTY_FINAL_DATA
+	WHERE ZF_CLAIM_STATUS_FLAG IN ('Submit and Rejected/Canceled','Submit')
+		AND [Serial No] <> ''
+		and [Model Code] <> ''
+	GROUP BY [Model Code],[Serial No]
+	HAVING COUNT(DISTINCT [Job Number]) >1
+)
+AND ZF_CLAIM_STATUS_FLAG IN ('Submit and Rejected/Canceled','Submit')
+AND [Serial No] <> ''
+AND [Model Code] <> ''
+
+--67,479
+SELECT COUNT(DISTINCT [Job Number])
+FROM B01_04_IT_WARRANTY_FINAL_DATA
+WHERE  ZF_JOB_RELATED_RE_REPAIR = 'Yes'
+
+-- 1.2 / Update the date gap
+
+ALTER TABLE B01_04_IT_WARRANTY_FINAL_DATA ADD ZF_DAY_GAP_BETWEEN_RE_REPAIR INT
+
+
+UPDATE B01_04_IT_WARRANTY_FINAL_DATA 
+SET ZF_DAY_GAP_BETWEEN_RE_REPAIR = RepairGap
+FROM B01_04_IT_WARRANTY_FINAL_DATA A1
+INNER JOIN (
+  SELECT DISTINCT [Job Number],RepairGap FROM (
+SELECT 
+        
+        [Job Number],
+        DATEDIFF(DAY, LAG([Repair Completed Date]) OVER (PARTITION BY [Serial No],[Model Code]  ORDER BY [Repair Completed Date]), [Repair Completed Date]) AS RepairGap
+    FROM (
+		SELECT 
+			[Serial No],
+			[Model Code],
+			[Repair Completed Date],
+			[Job Number]
+        FROM B01_04_IT_WARRANTY_FINAL_DATA
+    where 
+	 ZF_JOB_RELATED_RE_REPAIR = 'Yes'
+	 and seq =1
+) as c
+) AS TEMP
+) AS B
+ON A1.[Job Number] = B.[Job Number]
+
+-- 1.3
+
+ALTER TABLE B01_04_IT_WARRANTY_FINAL_DATA DROP COLUMN ZF_JOB_RELATED_RE_REPAIR_LESS_THAN_90_DAYS
+ALTER TABLE B01_04_IT_WARRANTY_FINAL_DATA ADD ZF_JOB_RELATED_RE_REPAIR_LESS_THAN_90_DAYS NVARCHAR(3)
+
+
+UPDATE B01_04_IT_WARRANTY_FINAL_DATA
+SET ZF_JOB_RELATED_RE_REPAIR_LESS_THAN_90_DAYS = 'No'
+
+
+UPDATE B01_04_IT_WARRANTY_FINAL_DATA
+SET ZF_JOB_RELATED_RE_REPAIR_LESS_THAN_90_DAYS = 'Yes'
+WHERE  ZF_DAY_GAP_BETWEEN_RE_REPAIR <= 90
+AND ZF_JOB_RELATED_RE_REPAIR = 'Yes'
+
+UPDATE B01_04_IT_WARRANTY_FINAL_DATA
+SET ZF_JOB_RELATED_RE_REPAIR_LESS_THAN_90_DAYS = 'Yes'
+WHERE  CONCAT([Model Code], [Serial No]) IN 
+(
+	SELECT DISTINCT CONCAT([Model Code], [Serial No])
+	FROM B01_04_IT_WARRANTY_FINAL_DATA
+	WHERE ZF_JOB_RELATED_RE_REPAIR_LESS_THAN_90_DAYS = 'Yes'
+
+)
+AND ZF_DAY_GAP_BETWEEN_RE_REPAIR IS NULL
+
+/*
+
+---------------- same asc ------------------------------
+
+ALTER TABLE B01_04_IT_WARRANTY_FINAL_DATA ADD ZF_JOB_RELATED_RE_REPAIR_SAME_ASC NVARCHAR(3)
+
+UPDATE B01_04_IT_WARRANTY_FINAL_DATA
+SET ZF_JOB_RELATED_RE_REPAIR_SAME_ASC = 'No'
+
+
+
+UPDATE B01_04_IT_WARRANTY_FINAL_DATA
+SET ZF_JOB_RELATED_RE_REPAIR_SAME_ASC = 'Yes'
+WHERE [Model Code]+[Serial No]+[ASC Code] IN
+(
+	
+	SELECT [Model Code]+[Serial No]+[ASC Code] FROM B01_04_IT_WARRANTY_FINAL_DATA
+	WHERE ZF_CLAIM_STATUS_FLAG IN ('Submit and Rejected/Canceled','Submit')
+		AND [Serial No] <> ''
+		and [Model Code] <> ''
+	GROUP BY [Model Code],[Serial No],[ASC Code]
+	HAVING COUNT(DISTINCT [Job Number]) >1
+)
+AND ZF_CLAIM_STATUS_FLAG IN ('Submit and Rejected/Canceled','Submit')
+AND [Serial No] <> ''
+AND [Model Code] <> ''
+
+
+
+
+
+ALTER TABLE B01_04_IT_WARRANTY_FINAL_DATA ADD ZF_DAY_GAP_BETWEEN_RE_REPAIR_SAME_ASC INT
+
+
+UPDATE B01_04_IT_WARRANTY_FINAL_DATA 
+SET ZF_DAY_GAP_BETWEEN_RE_REPAIR_SAME_ASC = RepairGap
+FROM B01_04_IT_WARRANTY_FINAL_DATA A1
+INNER JOIN (
+  SELECT DISTINCT [Job Number],RepairGap FROM (
+SELECT 
+        
+        [Job Number],
+        DATEDIFF(DAY, LAG([Repair Completed Date]) OVER (PARTITION BY [Serial No],[Model Code],[asc code]  ORDER BY [Repair Completed Date]), [Repair Completed Date]) AS RepairGap
+    FROM (SELECT 
+        [Serial No],
+        [Model Code],
+        [Begin Repair Date],
+        [Repair Completed Date],
+        [Job Number],[asc code]
+         from B01_04_IT_WARRANTY_FINAL_DATA
+    where 
+	 ZF_JOB_RELATED_RE_REPAIR_SAME_ASC = 'Yes'
+	 and seq =1
+) as c
+) AS TEMP
+) AS B
+ON A1.[Job Number] = B.[Job Number]
+
+
+UPDATE B01_04_IT_WARRANTY_FINAL_DATA
+SET ZF_JOB_RELATED_RE_REPAIR_LESS_THAN_90_DAYS_SAME_ASC = 'No'
+
+
+UPDATE B01_04_IT_WARRANTY_FINAL_DATA
+SET ZF_JOB_RELATED_RE_REPAIR_LESS_THAN_90_DAYS_SAME_ASC = 'Yes'
+WHERE  ZF_DAY_GAP_BETWEEN_RE_REPAIR_SAME_ASC <= 90
+AND ZF_JOB_RELATED_RE_REPAIR_SAME_ASC = 'Yes'
+
+UPDATE B01_04_IT_WARRANTY_FINAL_DATA
+SET ZF_JOB_RELATED_RE_REPAIR_LESS_THAN_90_DAYS_SAME_ASC = 'Yes'
+WHERE  CONCAT([Model Code], [Serial No], [ASC Code]) IN 
+(
+	SELECT DISTINCT CONCAT([Model Code], [Serial No],[ASC Code])
+	FROM B01_04_IT_WARRANTY_FINAL_DATA
+	WHERE ZF_JOB_RELATED_RE_REPAIR_LESS_THAN_90_DAYS_SAME_ASC = 'Yes'
+
+)
+AND ZF_DAY_GAP_BETWEEN_RE_REPAIR_SAME_ASC IS NULL
+
+
+
+------------------------- PART CODE
+
+
+UPDATE B01_04_IT_WARRANTY_FINAL_DATA
+SET ZF_JOB_RELATED_RE_REPAIR_SAME_PART_CODE = 'Yes'
+WHERE [Model Code]+[Serial No]+[Part Code] IN
+(
+	
+	SELECT [Model Code]+[Serial No]+[Part Code] FROM B01_04_IT_WARRANTY_FINAL_DATA
+	WHERE ZF_CLAIM_STATUS_FLAG IN ('Submit and Rejected/Canceled','Submit')
+		AND [Serial No] <> ''
+		and [Model Code] <> ''
+		AND LEN([Part Code])>1
+		AND  ZF_PART_FEE_CLAIM_STATUS LIKE '%Submit%'
+	GROUP BY [Model Code],[Serial No],[Part Code]
+	HAVING COUNT(DISTINCT [Job Number]) >1
+)
+AND ZF_CLAIM_STATUS_FLAG IN ('Submit and Rejected/Canceled','Submit')
+AND [Serial No] <> ''
+AND [Model Code] <> ''
+AND LEN([Part Code])>1
+AND  ZF_PART_FEE_CLAIM_STATUS LIKE '%Submit%'
+
+
+
+
+---------------------------------same part code
+
+
+
+ALTER TABLE B01_04_IT_WARRANTY_FINAL_DATA ADD ZF_DAY_GAP_BETWEEN_RE_REPAIR_SAME_PART_CODE INT
+
+
+UPDATE B01_04_IT_WARRANTY_FINAL_DATA 
+SET ZF_DAY_GAP_BETWEEN_RE_REPAIR_SAME_PART_CODE = RepairGap
+FROM B01_04_IT_WARRANTY_FINAL_DATA A1
+INNER JOIN (
+  SELECT DISTINCT [Job Number],RepairGap,Seq FROM (
+SELECT 
+        
+        [Job Number],
+        DATEDIFF(DAY, LAG([Repair Completed Date]) OVER (PARTITION BY [Serial No],[Model Code],[Part Code]  ORDER BY [Repair Completed Date]), [Repair Completed Date]) AS RepairGap,
+		LAG([Job Number]) OVER (PARTITION BY [Serial No],[Model Code],[Part Code]  ORDER BY [Repair Completed Date]) as previous_job,[Serial No],[Model Code],[Part Code],Seq
+    FROM (SELECT 
+        [Serial No],
+        [Model Code],
+        [Begin Repair Date],
+        [Repair Completed Date],
+        [Job Number],[asc code],[Part Code],seq
+         from B01_04_IT_WARRANTY_FINAL_DATA
+    where 
+     ZF_JOB_RELATED_RE_REPAIR_SAME_PART_CODE = 'Yes'
+
+) as c
+) AS TEMP
+where ([Job Number] <> previous_job or previous_job is null)
+) AS B
+ON A1.[Job Number] = B.[Job Number]
+and A1.Seq = B.Seq
+
+
+
+
+UPDATE B01_04_IT_WARRANTY_FINAL_DATA
+SET ZF_JOB_RELATED_RE_REPAIR_LESS_THAN_90_DAYS_SAME_PART_CODE = 'No'
+
+
+UPDATE B01_04_IT_WARRANTY_FINAL_DATA
+SET ZF_JOB_RELATED_RE_REPAIR_LESS_THAN_90_DAYS_SAME_PART_CODE = 'Yes'
+WHERE  ZF_DAY_GAP_BETWEEN_RE_REPAIR_SAME_PART_CODE <= 90
+AND ZF_JOB_RELATED_RE_REPAIR_SAME_PART_CODE = 'Yes'
+
+UPDATE B01_04_IT_WARRANTY_FINAL_DATA
+SET ZF_JOB_RELATED_RE_REPAIR_LESS_THAN_90_DAYS_SAME_PART_CODE = 'Yes'
+WHERE  CONCAT([Model Code], [Serial No], [Part Code]) IN 
+(
+	SELECT DISTINCT CONCAT([Model Code], [Serial No],[Part Code])
+	FROM B01_04_IT_WARRANTY_FINAL_DATA
+	WHERE ZF_JOB_RELATED_RE_REPAIR_LESS_THAN_90_DAYS_SAME_PART_CODE = 'Yes'
+
+)
+AND ZF_DAY_GAP_BETWEEN_RE_REPAIR_SAME_PART_CODE IS NULL
+
+
+
+
+
+
+UPDATE B01_04_IT_WARRANTY_FINAL_DATA
+SET ZF_JOB_RELATED_RE_REPAIR_LESS_THAN_90_DAYS_SAME_PART_CODE = 'Yes'
+where [Serial No]+[Model Code]+[Part Code] in
+(
+	select a.[Serial No]+a.[Model Code]+a.[Part Code] from (select distinct [Serial No],[Model Code],[Part Code] from B01_04_IT_WARRANTY_FINAL_DATA a
+	where ZF_JOB_RELATED_RE_REPAIR_SAME_PART_CODE = 'Yes'
+	and  ZF_DAY_GAP_BETWEEN_RE_REPAIR_SAME_PART_CODE is null) as a
+	inner join (select distinct [Serial No],[Model Code],[Part Code] from B01_04_IT_WARRANTY_FINAL_DATA
+	where ZF_JOB_RELATED_RE_REPAIR_SAME_PART_CODE = 'Yes'
+	and  ZF_DAY_GAP_BETWEEN_RE_REPAIR_SAME_PART_CODE <90) as b
+	on a.[Model Code] = b.[Model Code]
+	and b.[Serial No] = a.[Serial No]
+	AND a.[Part Code] = b.[Part Code]
+
+)
+and (ZF_DAY_GAP_BETWEEN_RE_REPAIR_SAME_PART_CODE is null or ZF_DAY_GAP_BETWEEN_RE_REPAIR_SAME_PART_CODE<90)
+
+*/
+GO

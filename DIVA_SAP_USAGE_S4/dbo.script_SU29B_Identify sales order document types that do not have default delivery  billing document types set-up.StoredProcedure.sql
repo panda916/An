@@ -1,0 +1,187 @@
+USE [DIVA_SAP_USAGE_S4]
+GO
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+CREATE   PROCEDURE [dbo].[script_SU29B_Identify sales order document types that do not have default delivery/ billing document types set-up]
+WITH EXECUTE AS CALLER
+AS
+--DYNAMIC_SCRIPT_START
+
+-- Script object: Identify sales order document types that do not have default delivery/ billing document types set-up
+ 
+-- Step 1: select data from BO05_01_IT_SALE_DOCUMENT(sales document type cube)
+
+
+EXEC SP_REMOVE_TABLES 'SU29B_%'
+
+EXEC SP_DROPTABLE 'SU29B_01_RT_TVAK_SALE_DOC_NOT_LINK_DELIVERY_TYPE'
+
+SELECT 
+	DISTINCT
+	TVAK_AUART,
+	TVAKT_BEZEI,
+	TVHBT_BEZEI,
+	TVAK_KOPGR,
+	TVAK_LFARV,
+	TVAK_FKARV,
+	TVAK_FKARA,
+	TVAK_VBTYP,
+	TVLKT_VTEXT_TVAK,
+	TVFKT_VTEXT_TVAK,
+	ZF_TVAK_VBTYP_DESCRIPTION,
+	TVFKT_VTEXT_TVAK_FKARA,
+	-- Add flag to show sales document types are linked to delivery types or not
+	(
+		CASE 
+			WHEN LEN(TVAK_FKARV)  < 1  THEN 'Yes'
+			ELSE 'No'
+		END
+	) AS ZF_TVAK_FKARV_EQ_BLANK
+INTO SU29B_01_RT_TVAK_SALE_DOC_NOT_LINK_DELIVERY_TYPE
+FROM BO05_01_IT_TVAK_SALE_DOCUMENT_TYPE
+-- Just get sales order document type
+WHERE TVAK_VBTYP = 'C'
+
+-- Step 2: Create a cube for sales document, just get sales document category = C
+--To limit down the size, 
+--only get the case that sale order don't have billing document
+--Filter the sales orders (VBAP/VBAK, category C)
+--for which the document type is one of the document types found in exception 
+--(because it does not have a default billing type in TVAK)
+-- add delivery types from A_LIKP and billing doc type from VBRK
+
+EXEC SP_DROPTABLE 'SU29B_02_XT_VBAK_VBAP_SALES_DOC'
+	SELECT B28_01_IT_SALE_DOCUMENTS.*,
+		--TVAKT_BEZEI, -- Field is already in the cube
+		B28_ZF_DD07T_DDTEXT_VBTYP AS ZF_VBAK_VBTYP_DESCRIPTION
+	INTO SU29B_02_XT_VBAK_VBAP_SALES_DOC
+	FROM B28_01_IT_SALE_DOCUMENTS
+	-- Get sales document type description
+	--LEFT JOIN A_TVAKT
+	--ON B28_VBAK_AUART = TVAKT_AUART
+
+	WHERE B28_VBAK_VBTYP = 'C' 
+--Get only sale document where sale document type exist in TVAK
+		AND B28_VBAK_AUART IN
+	(
+		SELECT DISTINCT TVAK_AUART FROM SU29B_01_RT_TVAK_SALE_DOC_NOT_LINK_DELIVERY_TYPE
+	)
+--Get the sale document where it do not have billing document
+		AND  B28_VBAK_VBELN+B28_VBAP_POSNR  NOT IN   
+		(
+			SELECT DISTINCT B30_VBRP_AUBEL+B30_VBRP_AUPOS FROM B30_01_IT_INVOICE_DOCS
+		)
+
+-- Step 3: Detailed table of the sales orders for
+--all those where the sales document type 
+--either doesn't have a default delivery type or billing type
+
+EXEC SP_DROPTABLE 'SU29B_03_XT_VBAK_VBAP_SOS_NO_DEFAULT_DELI_BILL'
+SELECT B28_01_IT_SALE_DOCUMENTS.*,
+		B29_LIKP_LFART,
+		B30_VBRK_FKART,
+		TVAKT_BEZEI,
+		TVAK_LFARV,
+		TVAK_FKARV,
+		TVAK_FKARA,
+		(	
+			CASE 
+				WHEN LEN(TVAK_LFARV)  < 1  THEN 'Yes'
+				ELSE 'No'
+		END 
+		) AS ZF_TVAK_LFARV_EQ_BLANK,
+		(	
+			CASE 
+				WHEN LEN(TVAK_FKARV)  < 1  THEN 'Yes'
+				ELSE 'No'
+		END 
+		) AS ZF_TVAK_FKARV_EQ_BLANK,
+		(	
+			CASE 
+				WHEN LEN(TVAK_FKARA)  < 1  THEN 'Yes'
+				ELSE 'No'
+		END 
+		) AS ZF_TVAK_FKARA_EQ_BLANK
+INTO SU29B_03_XT_VBAK_VBAP_SOS_NO_DEFAULT_DELI_BILL
+FROM B28_01_IT_SALE_DOCUMENTS
+LEFT JOIN BO05_01_IT_TVAK_SALE_DOCUMENT_TYPE 
+	ON B28_VBAK_AUART = TVAK_AUART
+LEFT JOIN B29_01_IT_DELIVERY_DOCS
+	ON B28_VBAK_VBELN = B29_LIPS_VGBEL AND B28_VBAP_POSNR = B29_LIPS_VGPOS
+LEFT JOIN B30_01_IT_INVOICE_DOCS
+	ON B28_VBAK_VBELN = B30_VBRP_VGBEL AND 
+		B28_VBAP_POSNR = B30_VBRP_VGPOS
+	-- Just get sales order document type
+	WHERE B28_VBAK_VBTYP = 'C' AND 
+		  (LEN(TVAK_LFARV) < 1 OR LEN(TVAK_FKARV) < 1 OR LEN(TVAK_FKARA) < 1) -- where sales document type 
+																			-- either doesn't have a default delivery type or billing type
+
+-- Step 4: Detailed table of the Delivery documents that relate to those sales orders with _DM key
+
+EXEC SP_DROPTABLE 'SU29B_04_XT_LIKP_SOS_NO_DEFAULT_DELI_BILL'
+	SELECT DISTINCT B29_01_IT_DELIVERY_DOCS.*,
+		   B28_VBAK_VBELN,
+		   B28_VBAP_POSNR,
+		   B28_VBAK_AUART,
+		   A_TVPT.TVPT_Description, -- HL: Link again to the A_TVPT table as the field is not available in master script
+		   TVAKT_BEZEI,
+		   TVAK_LFARV,
+		   TVAK_FKARV,
+		   TVAK_FKARA,
+		   ZF_TVAK_LFARV_EQ_BLANK,
+		   ZF_TVAK_FKARV_EQ_BLANK,
+		   ZF_TVAK_FKARA_EQ_BLANK		
+	INTO SU29B_04_XT_LIKP_SOS_NO_DEFAULT_DELI_BILL
+	FROM B29_01_IT_DELIVERY_DOCS
+	INNER JOIN SU29B_03_XT_VBAK_VBAP_SOS_NO_DEFAULT_DELI_BILL
+	ON B28_VBAK_VBELN = B29_LIPS_VGBEL AND B28_VBAP_POSNR = B29_LIPS_VGPOS
+	LEFT JOIN A_TVPT
+	ON B28_VBAP_PSTYV = A_TVPT.TVPT_PSTYV
+
+
+-- Step 5: Detailed table of the billing document that relate to those sales orders with _DM key 
+-- (that links back to the sales order - not that links back to the delivery because sometimes you get the billing document 
+-- without the delivery document)
+
+EXEC SP_DROPTABLE 'SU29B_05_XT_VBAP_SOS_NO_DEFAULT_DELI_BILL'
+	SELECT DISTINCT B30_01_IT_INVOICE_DOCS.*,
+		   B28_VBAK_VBELN,
+		   B28_VBAP_POSNR,
+		   B28_VBAK_AUART,
+		   TVAKT_BEZEI,
+		   TVAK_LFARV,
+		   TVAK_FKARV,
+		   TVAK_FKARA,
+		   ZF_TVAK_LFARV_EQ_BLANK,
+		   ZF_TVAK_FKARV_EQ_BLANK,
+		   ZF_TVAK_FKARA_EQ_BLANK
+	INTO SU29B_05_XT_VBAP_SOS_NO_DEFAULT_DELI_BILL
+	FROM B30_01_IT_INVOICE_DOCS
+   INNER JOIN SU29B_03_XT_VBAK_VBAP_SOS_NO_DEFAULT_DELI_BILL
+	ON B28_VBAK_VBELN = B30_VBRP_VGBEL AND 
+		B28_VBAP_POSNR = B30_VBRP_VGPOS
+		
+-- Unname the fields
+EXEC SP_UNNAME_FIELD 'B28_', 'SU29B_02_XT_VBAK_VBAP_SALES_DOC'
+
+EXEC SP_UNNAME_FIELD 'B28_', 'SU29B_03_XT_VBAK_VBAP_SOS_NO_DEFAULT_DELI_BILL'
+EXEC SP_UNNAME_FIELD 'B29_', 'SU29B_03_XT_VBAK_VBAP_SOS_NO_DEFAULT_DELI_BILL'
+EXEC SP_UNNAME_FIELD 'B30_', 'SU29B_03_XT_VBAK_VBAP_SOS_NO_DEFAULT_DELI_BILL'
+
+
+EXEC SP_UNNAME_FIELD 'B28_', 'SU29B_04_XT_LIKP_SOS_NO_DEFAULT_DELI_BILL'
+EXEC SP_UNNAME_FIELD 'B29_', 'SU29B_04_XT_LIKP_SOS_NO_DEFAULT_DELI_BILL'
+
+EXEC SP_UNNAME_FIELD 'B28_', 'SU29B_05_XT_VBAP_SOS_NO_DEFAULT_DELI_BILL'
+
+EXEC SP_UNNAME_FIELD 'B30_', 'SU29B_05_XT_VBAP_SOS_NO_DEFAULT_DELI_BILL'
+-- Rename the fields
+EXEC SP_RENAME_FIELD 'SU29B_01_', 'SU29B_01_RT_TVAK_SALE_DOC_NOT_LINK_DELIVERY_TYPE'
+EXEC SP_RENAME_FIELD 'SU29B_02_', 'SU29B_02_XT_VBAK_VBAP_SALES_DOC'
+EXEC SP_RENAME_FIELD 'SU29B_03_', 'SU29B_03_XT_VBAK_VBAP_SOS_NO_DEFAULT_DELI_BILL'
+EXEC SP_RENAME_FIELD 'SU29B_04_', 'SU29B_04_XT_LIKP_SOS_NO_DEFAULT_DELI_BILL'
+EXEC SP_RENAME_FIELD 'SU29B_05_', 'SU29B_05_XT_VBAP_SOS_NO_DEFAULT_DELI_BILL'
+
+GO

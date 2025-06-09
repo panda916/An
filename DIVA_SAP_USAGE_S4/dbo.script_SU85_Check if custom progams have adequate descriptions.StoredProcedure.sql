@@ -1,0 +1,32 @@
+USE [DIVA_SAP_USAGE_S4]
+GO
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+CREATE   PROCEDURE [dbo].[script_SU85_Check if custom progams have adequate descriptions]
+WITH EXECUTE AS CALLER
+AS
+--DYNAMIC_SCRIPT_START
+
+-- Script object: Check if custom progams have adequate descriptions
+-- Step 1: select custom ABAP programs from TADIR table
+
+EXEC SP_REMOVE_TABLES 'SU85_01_RT_TADIR_CUSTOM_PROGRAM'
+
+SELECT A_TADIR.*,
+	TRDIRT_TEXT,
+	-- Add flag to check custom progams have description or not
+	IIF(LEN(TRDIRT_TEXT) > 0, 'Yes', 'No') AS ZF_OBJ_NAME_HAS_DESCRIPTION_FLAG
+INTO SU85_01_RT_TADIR_CUSTOM_PROGRAM
+FROM A_TADIR
+LEFT JOIN A_TRDIRT
+ON TRDIRT_NAME = TADIR_OBJ_NAME
+-- Just get custom ABAP programs
+WHERE TADIR_PGMID = 'R3TR'
+AND TADIR_OBJECT = 'PROG'
+AND (TADIR_OBJ_NAME LIKE 'Z%' OR TADIR_OBJ_NAME LIKE 'Y%')
+
+-- Rename the fields
+EXEC SP_RENAME_FIELD'SU85_01_', 'SU85_01_RT_TADIR_CUSTOM_PROGRAM'
+GO

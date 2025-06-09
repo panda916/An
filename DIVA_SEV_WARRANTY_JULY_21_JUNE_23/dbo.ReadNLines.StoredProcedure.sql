@@ -1,0 +1,13 @@
+USE [DIVA_SEV_WARRANTY_JULY_21_JUNE_23]
+GO
+SET ANSI_NULLS OFF
+GO
+SET QUOTED_IDENTIFIER OFF
+GO
+CREATE PROCEDURE [dbo].[ReadNLines]
+	@path [nvarchar](max),
+	@nrlines [int]
+WITH EXECUTE AS CALLER
+AS
+EXTERNAL NAME [CLRReadLines].[ReadWriteFileTips].[ReadNLines]
+GO

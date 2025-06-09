@@ -1,0 +1,113 @@
+USE [DIVA_SAP_USAGE_ECC]
+GO
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+-- =============================================
+-- Author:		KHOI
+-- Create date: 2023-10-25
+-- Description:This script is used to create all the necessary cube 
+--				that will be used for Shabeed tests and SU sap configuration tests.
+--				This script also used to run all the Shabeed tests, the results will be used in SU tests in Qlik
+-- =============================================
+-- Update: 2024-08-28
+-- Description: This script is run when the standard cubes have already in run using the database DIVA_MASTER_SCRIPT
+-- =============================================
+CREATE PROCEDURE [dbo].[B00_CREATE_CUBES_FROM_RAW_DATA_SU](@DBNAME as NVARCHAR(MAX))
+AS
+BEGIN	
+
+--Step 1 Create master data cube
+ 	EXEC  SP_REMOVE_TABLES_MASTER @DBNAME, 'BC%' 
+
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_BC01_T008_T008T'
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_BC02_T156_T156HT'
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_BC03_T16FB_KZFAE_DESC'
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_BC04_T16FS_T16FG'
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_BC05_T169G_ADD_FLAG'
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_BC07_T001_T001B_T009_T009B_T000_CC_FY_PP_CAT'
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_BC08_T030_T156T'
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_BC09_T163K_T163I'
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_BC11_TKA02_TKA01_TKKAP_TKKAB'
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_BC12_MARA_VS_MAKT_ADD_MAK_MAKTX '
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_BC13_T685A_SALES_CONDITION_TYPES'
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_BC14_PAHI_AM_PARAMETER'
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_BC15_DD09L_DD02T'
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_BC16_USR02_USERS'
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_BC17_T043S_T001'
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_BC19_SE16N_TAB_UPDATES'
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_BC20_SENSITIVE_CUSTOMER_FIELDS'
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_BC21_T156X_T156W_T156T_&_T030_ADD_DESC'
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_BC23_DISABLE_OBJECT'
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_BC24_TRANSPORT_SYSTEM'
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_BC25_IT_MARC_T001W_MAKT_DESC'
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_BC27_T69P_T001'
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_BC28_T001L_T001W'
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_BC29_T100C_T100_T100T'
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_BC30_TVLK_DELIVERY_TYPE'
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_BC31_TVCPF_TVFK_TVFKT_TVAP_TVAPT_TVLK_TVLKT_TVAKT_TVAK'
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_BC32_T16FG_T16FH'
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_BC33_T043G_T001'
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_BC34_SKB1_SKAT_T001'
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_BC35_T053E_T053R_T001'
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_BC37_ANLB_ANLA_T095_T001_ANLATXT'
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_BC38_REPOSRC_ADD_DESC'
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_BC43_T169F_ADD_DESC'
+---- STep 2 SOD user
+--	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_B22_SOD_MATRIX_PART1_UPTO_STEP7' -- Should have been run in Master script already
+--Step 3 Create transactions infor cubes
+
+--	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_B00_REPLACE_VIEW_BY_TABLE' -- Should have been run in Master script already
+--	EXEC SP_EXEC_DYNAMIC @DBNAME,'script_B00_TCURR_TCURF'  -- Should have been run in Master script already
+--	EXEC SP_EXEC_DYNAMIC  @DBNAME, 'script_B00_SS01_OTC_INFO_TABLE'  -- Should have been run in Master script already
+--	EXEC SP_EXEC_DYNAMIC @DBNAME,'B00_CREATE_AM_T077X_T077Y'  -- Should have been run in Master script already
+	
+--Step 3.1 Create JE infor cube
+
+--	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_BC40_FIN_GENERAL_LEDGER' -- Should have been run in Master script already
+
+----Step  3.2 Create Material movement cube
+--	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_BC39_MSEG_MKPF'  -- Should have been run in Master script already
+----STep 3.3 Create change cube
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_BC44_CDHDR_CDPOS'
+----STep 3.4 Create PTP cubes
+ 	EXEC  SP_REMOVE_TABLES_MASTER @DBNAME, 'BP%' 
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_BP01_SUPPLIERS'
+--	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_BP02A_PURCHASE_ORDERS' -- Should have been run in Master script already
+--	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_BC41_FIN_AP_AUTOMAPPING' -- Should have been run in Master script already
+--	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_BC42_PTP_APA' -- Should have been run in Master script already
+--	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_BP02B_PO_HISTORY' -- Should have been run in Master script already
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_BP03_GOODS_RECEIPTS'
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_BP04A_MM_INVOICES'
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_BP05A_REGUH'
+--	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_BP06_DUPLICATE_INVOICES' -- Should have been run in Master script already
+ 
+
+
+----Step 3.5 Create OTC cube
+	EXEC  SP_REMOVE_TABLES_MASTER @DBNAME, 'BO%' 
+
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_BO01_CUSTOMERS'
+--	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_BO02_SALES_ORDERS' -- Should have been run in Master script already
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_BO03_GOODS_ISSUES'
+--	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_BO04A_SD_INVOICES' -- Should have been run in Master script already
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_BO05_TVAK_SALES_DOCUMENT_TYPE'
+--	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_BO06_DELIVERY_DOC' -- Should have been run in Master script already
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_BO08_TVLP_DELIVERY_ITEM_CATEGORY'
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_BO09_SALE_DOCUMENT_ITEM_CATEGORY'
+
+----Step 4 Create Shabeeb tests, will combine with other tests in Qlik
+	EXEC  SP_REMOVE_TABLES_MASTER @DBNAME, 'C0%' 
+
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_C01_GR_REVERSALS_AFTER_INVOICE'	
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_C02_INV_GR_VERSUS_PO'	
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_C03_JE_INPUT_DATE_AFTER_POSTING_DATE'
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_C05_1TV_ACC_GROUP_CHECK'
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_C06_CUSTOMER_RECON_ACC'
+	EXEC SP_EXEC_DYNAMIC @DBNAME, 'script_C07_SUPPLIER_RECON_ACC'
+	
+
+END
+
+GO

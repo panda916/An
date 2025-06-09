@@ -1,0 +1,38 @@
+USE [DIVA_SEV_WARRANTY_JULY_21_JUNE_23]
+GO
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+CREATE FUNCTION [dbo].[STRING_TO_NUMBER] 
+(
+	@AMOUNT Varchar(1000))
+RETURNS MONEY
+AS
+BEGIN
+	IF CHARINDEX('E-', @AMOUNT, 0) <> 0
+		RETURN 0
+
+	DECLARE @return_amount MONEY
+	DECLARE @SIGN MONEY
+	SET @AMOUNT = REPLACE(DBO.TRIM(@AMOUNT),'*','')
+	-- Get the sign of input number
+	SET @SIGN = IIF(CHARINDEX('-', @AMOUNT, 0) > 0, -1, 1)
+	-- Remove sign of input number, sign will be added at the end
+	SET @AMOUNT = REPLACE(@AMOUNT, '-', '')
+	-- Converting input number from string to numeric form
+	SET @return_amount = 
+	CASE 
+		WHEN CHARINDEX('.', @AMOUNT, 0) = 0 AND CHARINDEX(',', @AMOUNT, CHARINDEX(',', @AMOUNT, 0) + 1) <> 0
+			THEN CONVERT(MONEY, @AMOUNT)  * @SIGN
+		WHEN CHARINDEX(',', @AMOUNT, 0) = 0 AND CHARINDEX('.', @AMOUNT, CHARINDEX('.', @AMOUNT, 0) + 1) <> 0
+			THEN CONVERT(MONEY, REPLACE(@AMOUNT,'.','')) * @SIGN 
+		WHEN CHARINDEX(',', @AMOUNT, 0) = 0
+			THEN CONVERT(MONEY, @AMOUNT)  * @SIGN
+		WHEN CHARINDEX(',', @AMOUNT, 0) > CHARINDEX('.', @AMOUNT, 0) AND CHARINDEX('.', @AMOUNT, 0) <> 0
+			THEN CONVERT(MONEY, REPLACE(REPLACE(@AMOUNT, '.', ''), ',' , '.')) * @SIGN
+		ELSE CONVERT(MONEY, REPLACE(@AMOUNT,',','')) * @SIGN 
+	END
+	RETURN @return_amount
+END
+GO

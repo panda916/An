@@ -1,0 +1,740 @@
+USE [DIVA_MASTER_SCRIPT]
+GO
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+
+CREATE       PROCEDURE [dbo].[script_B18_OTC_COPA]
+  
+WITH EXECUTE AS CALLER
+AS
+
+--DYNAMIC_SCRIPT_START
+/*
+	Title: [B18_OTC_COPA]
+	Description: Create a Cube containing all the relevant information available in SIMPLE for B18_01_TT_COPA_COPY. Create a set of calculated fields to support the profitability analysis.
+
+	--------------------------------------------------------------
+	Update history
+	--------------------------------------------------------------
+	Date			| Who |   Description
+	06-03-2017		FT		First version for Sony
+	04-04-2017		JCM		Addition of Business Domain 1 ,2 and change of CASE statement
+	10-04-2017		JCM		Inclusion of Currency (custom) and  Z(custom) currency fields for transactions table
+	11-04-2017		JCM		Removal of commented and unavailable fields/joins from transactions table
+	18-04-2017		MW		Removal of VV901 [Volume M3] from both transactions and summary cube
+	21-04-2017		JCM		Change to joins for transactions and restructure of summary creation to calc exch rate from CE1B00_B00_
+	24-04-2017		JCM		Alter of Profit and Cost centre name using temp tables
+	02-05-2017		JCM		Insert log table statements and update join to mapping table
+	30-09-2017		HT		Update and standardisation for GULF
+	09-12-2017		CW		Review CW
+	23-03-2022		Thuan	Remove MANDT field in join
+*/
+
+/* Initiate the log */  
+--Create database log table if it does not exist
+IF OBJECT_ID('LOG_SP_EXECUTION', 'U') IS NULL BEGIN CREATE TABLE [DBO].[LOG_SP_EXECUTION] ([DATABASE] NVARCHAR(MAX) NULL,[OBJECT] NVARCHAR(MAX) NULL,[OBJECT_TYPE] NVARCHAR(MAX) NULL,[USER] NVARCHAR(MAX) NULL,[DATE] DATE NULL,[TIME] TIME NULL,[DESCRIPTION] NVARCHAR(MAX) NULL,[TABLE] NVARCHAR(MAX),[ROWS] INT) END
+
+--Log start of procedure
+INSERT INTO [DBO].[LOG_SP_EXECUTION] ([DATABASE],[OBJECT],[OBJECT_TYPE],[USER],[DATE],[TIME],[DESCRIPTION],[TABLE],[ROWS])
+SELECT DB_NAME(),OBJECT_NAME(@@PROCID),'P',SYSTEM_USER,CONVERT(DATE,GETDATE()),CONVERT(TIME,GETDATE()),'Procedure started',NULL,NULL
+
+	----------------------------------------------------------------------------------------------------------------------------
+	-- Initialise parameters from [_Globals] table
+		
+	--Declare parameters here
+	DECLARE
+		 @currency NVARCHAR(MAX)			= (SELECT GLOBALS_VALUE FROM AM_GLOBALS WHERE GLOBALS_PARAMETER = 'currency')
+		,@date1 NVARCHAR(MAX)				= (SELECT GLOBALS_VALUE FROM AM_GLOBALS WHERE GLOBALS_PARAMETER = 'date1')
+		,@date2 NVARCHAR(MAX)				= (SELECT GLOBALS_VALUE FROM AM_GLOBALS WHERE GLOBALS_PARAMETER = 'date2')
+		,@downloaddate NVARCHAR(MAX)		= (SELECT GLOBALS_VALUE FROM AM_GLOBALS WHERE GLOBALS_PARAMETER = 'downloaddate')
+		,@exchangeratetype NVARCHAR(MAX)	= (SELECT GLOBALS_VALUE FROM AM_GLOBALS WHERE GLOBALS_PARAMETER = 'exchangeratetype')
+		,@language1 NVARCHAR(MAX)			= (SELECT GLOBALS_VALUE FROM AM_GLOBALS WHERE GLOBALS_PARAMETER = 'language1')
+		,@language2 NVARCHAR(MAX)			= (SELECT GLOBALS_VALUE FROM AM_GLOBALS WHERE GLOBALS_PARAMETER = 'language2')
+		,@year NVARCHAR(MAX)				= (SELECT GLOBALS_VALUE FROM AM_GLOBALS WHERE GLOBALS_PARAMETER = 'year')
+		,@id NVARCHAR(MAX)					= (SELECT GLOBALS_VALUE FROM AM_GLOBALS WHERE GLOBALS_PARAMETER = 'id')
+		,@LIMIT_RECORDS INT		= (SELECT GLOBALS_VALUE FROM AM_GLOBALS WHERE GLOBALS_PARAMETER = 'LIMIT_RECORDS')
+		,@COPA_TABLE_NAME NVARCHAR(50) = (SELECT GLOBALS_VALUE FROM AM_GLOBALS WHERE GLOBALS_PARAMETER = 'COPA_TABLE_NAME')
+		,@SQLCMD NVARCHAR(MAX) = ''
+
+SET ROWCOUNT 1000
+	----------------------------------------------------------------------------------------------------------------------------
+
+/*--Step 1
+-- Make a copy of the COPA table and then rename all COPA fields to generic COPA table name
+*/
+-- this step is done in B00 to avoid code conflict
+
+/*--Step 2
+-- Obtain a copy of COPA with all currencies
+-- Add the business domains from AM_SCOPE
+*/
+
+EXEC SP_DROPTABLE 'B18_01_TT_COPA_COPY'
+
+	SELECT 
+		B00_COPA.*
+		,AM_SCOPE.SCOPE_BUSINESS_DMN_L1
+		,AM_SCOPE.SCOPE_BUSINESS_DMN_L2
+	INTO B18_01_TT_COPA_COPY
+	FROM B00_COPA
+	INNER JOIN AM_SCOPE
+	ON  B00_COPA.COPA_BUKRS = AM_SCOPE.SCOPE_CMPNY_CODE
+		
+		
+/*--Step 3
+--Create a list of latest information per profit center
+
+*/
+	
+	
+EXEC SP_DROPTABLE 'B18_02_TT_CEPCT'
+EXEC SP_DROPTABLE 'B18_03_IT_CEPCT_LATEST'
+
+
+	SELECT 
+			A_CEPCT.*
+		,ROW_NUMBER() OVER( PARTITION BY CEPCT_MANDT, CEPCT_PRCTR, CEPCT_KOKRS ORDER BY CEPCT_DATBI DESC) AS [Row number]
+	INTO B18_02_TT_CEPCT
+	FROM A_CEPCT
+	WHERE CEPCT_SPRAS = @language1
+	AND CEPCT_DATBI>=@downloaddate
+
+	SELECT * INTO B18_03_IT_CEPCT_LATEST FROM B18_02_TT_CEPCT WHERE [Row number] = 1 
+	
+
+/*--Step 4
+-- Obtain the customer account group per customer
+-- (In russia the field KTGRD is not present in the COPA table and so needs to be added from KNVV)
+*/
+--	EXEC SP_DROPTABLE 'B18_04_IT_CUS_GRP_DESC'
+--	SELECT  DISTINCT KNVV_VKORG, 
+--			KNVV_KUNNR, 
+--			KNVV_KTGRD,
+--			TVKTT_VTEXT TVKTT_VTEXT
+--	INTO B18_04_IT_CUS_GRP_DESC 
+--	FROM A_KNVV
+--	LEFT JOIN A_TVKTT
+--		ON A_TVKTT.TVKTT_KTGRD = KNVV_KTGRD
+--	WHERE  A_TVKTT.TVKTT_SPRAS = @language1
+
+--IF EXISTS(SELECT TOP 1 * FROM B00_COPA WHERE COPA_BUKRS IN ('RU10')) 
+--	EXEC B18_SS01_CUS_GRP_DESC_RUSSIA
+
+/*--Step 5
+-- Add information to the COPA table from different source tables or cubes.
+*/
+
+
+EXEC SP_DROPTABLE 'B18_05_TT_COPA_TRANSACTION'
+
+	SELECT
+		B18_01_TT_COPA_COPY.*
+		,CASE WHEN B18_01_TT_COPA_COPY.COPA_BUDAT BETWEEN @date1 AND @date2 THEN 'X' ELSE '' END ZF_BUDAT_POSTED_IN_PER_FLAG
+		,B18_01_TT_COPA_COPY.[COPA_GJAHR] + '-' +
+		CASE 
+		 WHEN B18_01_TT_COPA_COPY.[COPA_PERDE] IN ('001','002','003') THEN 'Q1'
+		 WHEN B18_01_TT_COPA_COPY.[COPA_PERDE] IN ('004','005','006') THEN 'Q2'
+		 WHEN B18_01_TT_COPA_COPY.[COPA_PERDE] IN ('007','008','009') THEN 'Q3'
+		 ELSE 'Q4' END AS ZF_GJAHR_PERDE_FISCAL_YQ 			--  							AS  [Z_Fiscal year-quarter]
+		,COALESCE(RIGHT(B18_01_TT_COPA_COPY.COPA_ARTNR,8),'') AS ZF_COPA_ARTNR_8DIGIT
+        ,CONVERT(nvarchar(4), DATEPART(yyyy,B18_01_TT_COPA_COPY.[COPA_BUDAT])) + '-' + left(DATENAME(mm,B18_01_TT_COPA_COPY.[COPA_BUDAT]),3) AS ZF_BUDAT_CALENDAR_YM--							AS  [Z_Calendar year-month]
+		-- Create a field that gives the first day of the month in date format. To be used in Qlik for creating dashboard compatible year-month field only
+		,DATEADD(DAY,1,EOMONTH(B18_01_TT_COPA_COPY.[COPA_BUDAT],-1)) AS ZF_BUDAT_CALLENDAR_1ST_MNTH--  					AS  [Z_Calendar year-first of month]
+			,''  														AS  ZF_BILL_TO_PARTY --[Bill-to party]
+			,''  														AS  ZF_BILL_TO_PARTY_NAME --[Bill-to party name]
+			,''  														AS  ZF_TRADING_PARTNER--[Trading partner]
+			,''  														AS  ZF_TRADING_PARTNER_NAME--[Trading partner name]
+		,@currency AS GLOBALS_CURRENCY
+		,ROW_NUMBER() OVER (Order by B18_01_TT_COPA_COPY.COPA_BELNR) AS ZF_ROWNUMBER
+
+		INTO B18_05_TT_COPA_TRANSACTION
+			--Main COPA data source
+		FROM B18_01_TT_COPA_COPY
+		WHERE B18_01_TT_COPA_COPY.COPA_BUDAT BETWEEN @date1 AND @date2
+
+
+/*--Step 6
+-- Put the values columns from COPA into one value field (horizontal presentation to vertical presentation)
+-- Add categories for Net sales adn Gross Profit
+--- For these calculations, the code assumes that the fields for sales reductions are -ve and
+--- and the fields for COGS are +ve
+---- In the code below sales reductions fields are not multiplied by -1, whereas COGS are
+
+*/
+
+EXEC SP_DROPTABLE 'B18_06_TT_COPA_TRANSACTION_UNPIVOT'
+	-- Create variables to run dynamic SQL later
+	DECLARE @FIELD_NAME NVARCHAR(MAX), @LIST_COMA_SAP_FIELDS NVARCHAR(MAX) = ''
+		
+	--Create a table variable that will hold all the names from the mapping table
+	--- Include in the table variable only fields that also exist in the COPA table from SAP
+	DECLARE @LIST_SAP_FIELD TABLE (tblName NVARCHAR(MAX))
+	INSERT INTO @LIST_SAP_FIELD
+		SELECT DISTINCT 'COPA_' + COMA_SAP_field FROM AM_COPA_MAPPING
+
+
+	-- Make a cursor for the table variable  (@LIST_SAP_FIELD)
+	DECLARE CURSOR_LIST_SAP_FIELD CURSOR FOR SELECT DISTINCT 'COPA_' + COMA_SAP_field 
+										FROM AM_COPA_MAPPING
+										WHERE EXISTS(SELECT 1 FROM sys.columns 
+														WHERE Name = 'COPA_' + COMA_SAP_field 
+												AND Object_ID = Object_ID('B18_05_TT_COPA_TRANSACTION'))
+	
+	-- Use the cursor to point to each field one by one in the table variable (@LIST_SAP_FIELD)
+	--- and to make a list of SAP technical fields from AM_COPA_MAPPING, field COMA_SAP_FIELD that is stored in the variable @LIST_COMA_SAP_FIELDS
+
+	OPEN CURSOR_LIST_SAP_FIELD
+	FETCH NEXT FROM CURSOR_LIST_SAP_FIELD INTO @FIELD_NAME
+	WHILE @@FETCH_STATUS = 0
+	BEGIN
+		SET @LIST_COMA_SAP_FIELDS = @LIST_COMA_SAP_FIELDS + @FIELD_NAME + ', '
+		FETCH NEXT FROM CURSOR_LIST_SAP_FIELD INTO @FIELD_NAME
+	END
+	CLOSE CURSOR_LIST_SAP_FIELD
+	DEALLOCATE CURSOR_LIST_SAP_FIELD
+
+	-- Make a variable to hold the SQL command that will later:
+	-- Taking the COPA table, use UNPIVOT to put all of the fields in the @LIST_COMA_SAP_FIELDS (which are columns in the COPA table) and 
+	-- moving them into fields ZF_FIELD_NAME_TECH (field name) and ZF_FIELD_VALUE (field value) - so that they are presented vertically
+	-- For example, columns VVEP1 AND VVES1 in B00_COPA would be then found as:
+	-- ZF_FIELD_NAME_TECH   ZF_FIELD_VALUE
+	-- VVEP1				123.45
+	-- VVEP1		         0.01
+	-- VVEP1 ...
+	-- VVES1                123.45
+	-- VVES1                  0.01
+	-- VVES1 ...
+	-- Ignoring values that are 0 in order to optimize the number of lines that will be in the unpivoted table
+
+	-- Once the unpivot is achieved, left join to add the friendly name of the SAP field from the mapping table, as well as the 
+	-- hierarchy names.
+	 
+	-- !! Points for attention for other entities: Ensure that there is only one controlling area in the COPA table, or that you limit the controlling areas to be used
+	-- !! The field COMA_VKORG should be renamed to COMA_BUKRS, or otherwise check that you limit to the relevant sales organizations
+
+
+	SET @SQLCMD = 'SELECT COPA_BUKRS, COPA_GJAHR, COPA_BELNR, COPA_POSNR, COPA_PALEDGER, COPA_REC_WAERS, COMA_M_COPA_field_label, ZF_BUDAT_POSTED_IN_PER_FLAG,
+					COMA_M_Hierarchy_L1, COMA_M_Hierarchy_L2, COMA_M_Hierarchy_L3,
+					ZF_FIELD_NAME_TECH, ZF_FIELD_VALUE * CAST(COMA_Value AS INT) AS ZF_FIELD_VALUE, COMA_Value, COMA_M_CI_or_non_CI, COMA_M_Contractual_condition, COMA_M_Settlement_method, COMA_M_Rebate_basis
+				
+				INTO B18_06_TT_COPA_TRANSACTION_UNPIVOT
+				
+				FROM B18_05_TT_COPA_TRANSACTION
+
+				UNPIVOT (ZF_FIELD_VALUE FOR ZF_FIELD_NAME_TECH IN ('
+						+ LEFT(@LIST_COMA_SAP_FIELDS, LEN(@LIST_COMA_SAP_FIELDS) - 1) +
+					'))  AS CIunpivot 
+				LEFT JOIN AM_COPA_MAPPING ON ''' + 'COPA_' + ''' + COMA_SAP_field = ZF_FIELD_NAME_TECH AND COPA_BUKRS = COMA_BUKRS
+				WHERE ISNULL(ZF_FIELD_VALUE, 0) <> 0'
+
+
+   -- Execute the dynamic SQL:
+		
+	RAISERROR(@SQLCMD, 10, -1) WITH NOWAIT
+	--execute SQL statement
+	EXEC SP_EXECUTESQL @SQLCMD
+	
+	CREATE INDEX KEY_INDEX_IDX ON B18_06_TT_COPA_TRANSACTION_UNPIVOT(COPA_BUKRS, COPA_GJAHR, COPA_BELNR, COPA_POSNR, ZF_FIELD_NAME_TECH, COPA_PALEDGER)
+
+	EXEC SP_DROPTABLE 'B18_06B_TT_COPA_TRANSACTION_UNPIVOT'
+	SELECT 
+		DISTINCT 
+		ISNULL(COPA_COMPANY_CURRENCY.COPA_BUKRS, COPA_CUSTOM_CURRENCY.COPA_BUKRS) COPA_BUKRS,
+		ISNULL(COPA_COMPANY_CURRENCY.COPA_GJAHR, COPA_CUSTOM_CURRENCY.COPA_GJAHR) COPA_GJAHR, 
+		ISNULL(COPA_COMPANY_CURRENCY.COPA_BELNR, COPA_CUSTOM_CURRENCY.COPA_BELNR) COPA_BELNR,
+		ISNULL(COPA_COMPANY_CURRENCY.COPA_POSNR, COPA_CUSTOM_CURRENCY.COPA_POSNR) COPA_POSNR,
+		COPA_CUSTOM_CURRENCY.COPA_PALEDGER COPA_PALEDGER_CUC, 
+		COPA_COMPANY_CURRENCY.COPA_PALEDGER COPA_PALEDGER_COC, 
+		COPA_CUSTOM_CURRENCY.COPA_REC_WAERS COPA_REC_WAERS_CUC, 
+		COPA_COMPANY_CURRENCY.COPA_REC_WAERS COPA_REC_WAERS_COC, 
+		ISNULL(COPA_COMPANY_CURRENCY.COMA_M_COPA_field_label, COPA_CUSTOM_CURRENCY.COMA_M_COPA_field_label) COMA_M_COPA_field_label,
+		ISNULL(COPA_COMPANY_CURRENCY.ZF_BUDAT_POSTED_IN_PER_FLAG, COPA_CUSTOM_CURRENCY.ZF_BUDAT_POSTED_IN_PER_FLAG) ZF_BUDAT_POSTED_IN_PER_FLAG,
+		ISNULL(COPA_COMPANY_CURRENCY.COMA_M_Hierarchy_L1, COPA_CUSTOM_CURRENCY.COMA_M_Hierarchy_L1) COMA_M_Hierarchy_L1,
+		ISNULL(COPA_COMPANY_CURRENCY.COMA_M_Hierarchy_L2, COPA_CUSTOM_CURRENCY.COMA_M_Hierarchy_L2) COMA_M_Hierarchy_L2,
+		ISNULL(COPA_COMPANY_CURRENCY.COMA_M_Hierarchy_L3, COPA_CUSTOM_CURRENCY.COMA_M_Hierarchy_L3) COMA_M_Hierarchy_L3,
+		ISNULL(COPA_COMPANY_CURRENCY.ZF_FIELD_NAME_TECH, COPA_CUSTOM_CURRENCY.ZF_FIELD_NAME_TECH) ZF_FIELD_NAME_TECH,
+		COPA_CUSTOM_CURRENCY.ZF_FIELD_VALUE  AS ZF_FIELD_VALUE_CUC, 
+		COPA_COMPANY_CURRENCY.ZF_FIELD_VALUE  AS ZF_FIELD_VALUE_COC, 
+		ISNULL(COPA_COMPANY_CURRENCY.COMA_Value, COPA_CUSTOM_CURRENCY.COMA_Value) COMA_Value, 
+		ISNULL(COPA_COMPANY_CURRENCY.COMA_M_CI_or_non_CI, COPA_CUSTOM_CURRENCY.COMA_M_CI_or_non_CI) COMA_M_CI_or_non_CI,
+		ISNULL(COPA_COMPANY_CURRENCY.COMA_M_Contractual_condition, COPA_CUSTOM_CURRENCY.COMA_M_Contractual_condition) COMA_M_Contractual_condition,
+		ISNULL(COPA_COMPANY_CURRENCY.COMA_M_Settlement_method, COPA_CUSTOM_CURRENCY.COMA_M_Settlement_method) COMA_M_Settlement_method,
+		ISNULL(COPA_COMPANY_CURRENCY.COMA_M_Rebate_basis, COPA_CUSTOM_CURRENCY.COMA_M_Rebate_basis) COMA_M_Rebate_basis
+	INTO B18_06B_TT_COPA_TRANSACTION_UNPIVOT
+	FROM (SELECT * FROM B18_06_TT_COPA_TRANSACTION_UNPIVOT WHERE COPA_PALEDGER = '01') COPA_CUSTOM_CURRENCY
+	FULL OUTER JOIN (SELECT * FROM B18_06_TT_COPA_TRANSACTION_UNPIVOT WHERE COPA_PALEDGER = '02') COPA_COMPANY_CURRENCY
+		ON COPA_CUSTOM_CURRENCY.COPA_BUKRS = COPA_COMPANY_CURRENCY.COPA_BUKRS AND	
+		COPA_CUSTOM_CURRENCY.COPA_GJAHR = COPA_COMPANY_CURRENCY.COPA_GJAHR AND	
+		COPA_CUSTOM_CURRENCY.COPA_BELNR = COPA_COMPANY_CURRENCY.COPA_BELNR AND	
+		COPA_CUSTOM_CURRENCY.COPA_POSNR = COPA_COMPANY_CURRENCY.COPA_POSNR AND
+		COPA_CUSTOM_CURRENCY.ZF_FIELD_NAME_TECH = COPA_COMPANY_CURRENCY.ZF_FIELD_NAME_TECH
+
+	DELETE B18_06B_TT_COPA_TRANSACTION_UNPIVOT
+		WHERE ISNULL(ZF_FIELD_VALUE_CUC, 0) = 0 AND ISNULL(ZF_FIELD_VALUE_COC, 0) = 0
+/*--Step 7
+-- Put the values columns from COPA into one value field (horizontal presentation to vertical presentation)
+-- Add categories for Net sales adn Gross Profit
+--- For these calculations, the code assumes that the fields for sales reductions are -ve and
+--- and the fields for COGS are +ve
+---- In the code below sales reductions fields are not multiplied by -1, whereas COGS are
+
+*/
+
+	EXEC SP_DROPTABLE 'B18_07_TT_COPA_TRANSACTION_UNPIVOT_FULL'
+
+    -- Make a copy of the Unpivoted COPA table: (and then for each union that follows appending - add lines 
+	-- that will enable total calculation of Net sales and gross profit
+	-- !! To check for your entity: Sales reductions field is already -ve in Ukraine and Russia in original COPA table
+	-- !! To check for your entity: COGS field is already +ve in Ukraine and Russia in original COPA table
+
+	SELECT COPA_BUKRS, COPA_GJAHR, COPA_BELNR, COPA_POSNR, 1 ZF_IS_ORIGINAL,COPA_REC_WAERS_COC, COPA_REC_WAERS_CUC, ZF_BUDAT_POSTED_IN_PER_FLAG, COMA_M_COPA_field_label,
+					COMA_M_Hierarchy_L1, COMA_M_Hierarchy_L2, COMA_M_Hierarchy_L3,
+					ZF_FIELD_NAME_TECH, ZF_FIELD_VALUE_COC, ZF_FIELD_VALUE_CUC, COMA_Value, COMA_M_CI_or_non_CI, COMA_M_Contractual_condition, COMA_M_Settlement_method, COMA_M_Rebate_basis
+	INTO B18_07_TT_COPA_TRANSACTION_UNPIVOT_FULL	
+	FROM B18_06B_TT_COPA_TRANSACTION_UNPIVOT
+	UNION
+	--Add values for category 'Net sales'
+	SELECT COPA_BUKRS, COPA_GJAHR, COPA_BELNR, COPA_POSNR, -1 ZF_IS_ORIGINAL, COPA_REC_WAERS_COC, COPA_REC_WAERS_CUC, 
+		ZF_BUDAT_POSTED_IN_PER_FLAG, COMA_M_COPA_field_label,
+					'Net Sales' AS COMA_M_Hierarchy_L1, NULL AS COMA_M_Hierarchy_L2, NULL AS COMA_M_Hierarchy_L3,
+					ZF_FIELD_NAME_TECH, ZF_FIELD_VALUE_COC, ZF_FIELD_VALUE_CUC, COMA_Value, COMA_M_CI_or_non_CI, COMA_M_Contractual_condition, COMA_M_Settlement_method, COMA_M_Rebate_basis
+	FROM B18_06B_TT_COPA_TRANSACTION_UNPIVOT
+		WHERE COMA_M_Hierarchy_L1 = 'Gross Sales' OR COMA_M_Hierarchy_L1 = 'Sales Reductions'
+	--Add values for category 'Gross profit'
+	UNION
+	SELECT COPA_BUKRS, COPA_GJAHR, COPA_BELNR, COPA_POSNR, -1 ZF_IS_ORIGINAL, COPA_REC_WAERS_COC, COPA_REC_WAERS_CUC, 
+		ZF_BUDAT_POSTED_IN_PER_FLAG, COMA_M_COPA_field_label,
+					'Gross Profit' AS COMA_M_Hierarchy_L1, NULL AS COMA_M_Hierarchy_L2, NULL AS COMA_M_Hierarchy_L3,
+					ZF_FIELD_NAME_TECH, ZF_FIELD_VALUE_COC, ZF_FIELD_VALUE_CUC, COMA_Value, COMA_M_CI_or_non_CI, COMA_M_Contractual_condition, COMA_M_Settlement_method, COMA_M_Rebate_basis
+	FROM B18_06B_TT_COPA_TRANSACTION_UNPIVOT
+		WHERE COMA_M_Hierarchy_L1 = 'Gross Sales' OR COMA_M_Hierarchy_L1 = 'Sales Reductions'
+	UNION
+	-- COGS is negated here for hte KPI Gross Profit calculation in COPA dashboard
+	-- The individual COGS fields are not negated in teh mapping table, because we want to see them as positive in the 
+	-- Sales reduction summary pivot table on the dashboard
+	SELECT COPA_BUKRS, COPA_GJAHR, COPA_BELNR, COPA_POSNR, -1 ZF_IS_ORIGINAL, COPA_REC_WAERS_COC, COPA_REC_WAERS_CUC, 
+		ZF_BUDAT_POSTED_IN_PER_FLAG, COMA_M_COPA_field_label,
+					'Gross Profit' AS COMA_M_Hierarchy_L1, NULL AS COMA_M_Hierarchy_L2, NULL AS COMA_M_Hierarchy_L3,
+					ZF_FIELD_NAME_TECH, ZF_FIELD_VALUE_COC*-1, ZF_FIELD_VALUE_CUC*-1 AS ZF_FIELD_VALUE, COMA_Value, COMA_M_CI_or_non_CI, COMA_M_Contractual_condition, COMA_M_Settlement_method, COMA_M_Rebate_basis
+	FROM B18_06B_TT_COPA_TRANSACTION_UNPIVOT
+		WHERE COMA_M_Hierarchy_L1 = 'COGS'
+	
+
+/*--Step 7
+-- Use PIVOT to make a pivot table with columns for each currency:
+--- Add a column ZF_COPA_FIELD_VALUE_COC that will contain the values from all of the lines that are for Company currency
+--- Add a column ZF_COPA_FIELD_VALUE_CUC that will contain the values from all of the lines that are for Custom currency
+---- The lines in B00_COPA that are for COPA_PA_LEDGER = '01' are for custom currency
+---- The lines in B00_COPA that are for COPA_PA_LEDGER = '02' are for company currency
+
+-- Add separate columns for hierarchies 1 to 3, for when we are on sales reductions to support separate QLIK graphs on 
+-- sales reductions
+*/
+	EXEC SP_DROPTABLE 'B18B_08_IT_COPA_HIERARCHY_VALUE'
+	SELECT
+		COPA_BUKRS,
+		COPA_GJAHR,
+		COPA_BELNR,
+		COPA_POSNR,
+		COPA_REC_WAERS_COC,
+		COPA_REC_WAERS_CUC,
+		ZF_BUDAT_POSTED_IN_PER_FLAG,
+		ZF_IS_ORIGINAL,
+		COMA_M_COPA_field_label,
+		COMA_M_Hierarchy_L1, COMA_M_Hierarchy_L2, COMA_M_Hierarchy_L3,
+		COMA_M_CI_or_non_CI, COMA_M_Contractual_condition, COMA_M_Settlement_method, COMA_M_Rebate_basis,
+		IIF(COMA_M_Hierarchy_L1 = 'Sales Reductions', COMA_M_Hierarchy_L1, NULL) as ZF_SR_L1,
+		IIF(COMA_M_Hierarchy_L1 = 'Sales Reductions', COMA_M_Hierarchy_L2, NULL) as ZF_SR_L2,
+		IIF(COMA_M_Hierarchy_L1 = 'Sales Reductions', COMA_M_Hierarchy_L3, NULL) as ZF_SR_L3,
+		ZF_FIELD_NAME_TECH, 
+		COMA_Value,
+		ZF_FIELD_VALUE_COC * ISNULL(B00_TCURX.TCURX_FACTOR, 1) as ZF_COPA_FIELD_VALUE_COC,
+		ZF_FIELD_VALUE_CUC ZF_COPA_FIELD_VALUE_CUC
+	INTO B18B_08_IT_COPA_HIERARCHY_VALUE
+	FROM B18_07_TT_COPA_TRANSACTION_UNPIVOT_FULL
+	LEFT JOIN B00_TCURX
+		ON TCURX_CURRKEY = COPA_REC_WAERS_COC
+
+/*--Step 8
+-- Remove the lines from B18_05_ that are for the Euros ledger, so that the currency selector works for multiple currencies
+-- Don't include the CU_ fields to test if they are necessary
+-- Hard-coded values: PA_LEDGER = '01' is for EUROS and PA_LEDGER = '02' is for local
+*/
+
+EXEC SP_DROPTABLE 'B18_09_IT_COPA_TRANSACTION'
+
+SELECT * INTO B18_09_IT_COPA_TRANSACTION FROM B18_05_TT_COPA_TRANSACTION WHERE COPA_PALEDGER <> '01' AND ZF_BUDAT_POSTED_IN_PER_FLAG = 'X'
+
+DECLARE @COPA_FILTER NVARCHAR(MAX), @COPA_SAP_FIELD NVARCHAR(MAX)
+DECLARE @OUTPUTMSG NVARCHAR(MAX)
+
+DECLARE @OUTPUT_TABLE NVARCHAR(100) = 'B18_09_IT_COPA_TRANSACTION'
+
+DECLARE CURSOR_SAP_FILTER CURSOR FOR SELECT DISTINCT COPA_FILTER, COPA_SAP_FIELD
+
+										FROM AM_COPA_FILTER_MAPPING WHERE COPA_SAP_FIELD <> ''
+
+
+	OPEN CURSOR_SAP_FILTER
+	FETCH NEXT FROM CURSOR_SAP_FILTER INTO @COPA_FILTER, @COPA_SAP_FIELD
+
+SET @OUTPUTMSG = 'START CREATING COPA FILTER FROM MAPPING FILE'
+RAISERROR (@OUTPUTMSG, 0, 1) WITH NOWAIT
+	WHILE @@FETCH_STATUS = 0
+	BEGIN
+		SET @OUTPUTMSG = 'WORKING ON COPA FILTER ' + @COPA_FILTER
+		RAISERROR (@OUTPUTMSG, 0, 1) WITH NOWAIT
+		BEGIN TRY
+			BEGIN TRY
+				SET @SQLCMD = 'ALTER TABLE ' + @OUTPUT_TABLE + ' DROP COLUMN ' + @COPA_FILTER + ''
+				EXEC SP_EXECUTESQL @SQLCMD
+				SET @OUTPUTMSG = '		DROPPED FIELD ' + @COPA_FILTER + ''
+				RAISERROR (@OUTPUTMSG, 0, 1) WITH NOWAIT
+			END TRY 
+			BEGIN CATCH END CATCH
+			BEGIN TRY
+				SET @SQLCMD = 'ALTER TABLE ' + @OUTPUT_TABLE + ' ADD ' + @COPA_FILTER + ' NVARCHAR(100)'
+				EXEC SP_EXECUTESQL @SQLCMD
+				SET @OUTPUTMSG = '		ADDED FIELD ' + @COPA_FILTER + ''
+				RAISERROR (@OUTPUTMSG, 0, 1) WITH NOWAIT
+			END TRY
+			BEGIN CATCH END CATCH
+			BEGIN TRY
+				SET @SQLCMD = 'UPDATE ' + @OUTPUT_TABLE + ' SET ' + @COPA_FILTER + ' = ' + @COPA_SAP_FIELD + ''
+				EXEC SP_EXECUTESQL @SQLCMD
+			END TRY
+			BEGIN CATCH
+				SET @OUTPUTMSG = '		FAILED TO FORM FILTER'
+				RAISERROR (@OUTPUTMSG, 0, 1) WITH NOWAIT
+				--SET @SQLCMD = 'ALTER TABLE ' + @OUTPUT_TABLE + ' DROP COLUMN ' + @COPA_FILTER + ''
+				--EXEC SP_EXECUTESQL @SQLCMD
+			END CATCH
+		END TRY
+		BEGIN CATCH END CATCH
+		
+		SET @OUTPUTMSG = 'FINISHED COPA FILTER ' + @COPA_FILTER
+		RAISERROR (@OUTPUTMSG, 0, 1) WITH NOWAIT
+		RAISERROR ('', 0, 1) WITH NOWAIT
+		FETCH NEXT FROM CURSOR_SAP_FILTER INTO @COPA_FILTER, @COPA_SAP_FIELD
+	END
+	CLOSE CURSOR_SAP_FILTER
+	DEALLOCATE CURSOR_SAP_FILTER
+
+    /*
+		Step 10: Create a Delivery documents cube for delivery and dialog user analysis
+	*/
+		EXEC SP_REMOVE_TABLES 'B18_10_IT_COPA_DELIVERY'
+		SELECT 
+				LIKP_MANDT,
+				LIKP_VBELN,
+				LIPS_POSNR,
+				LIKP_ERNAM,
+				A_USR02_HEADER.USR02_USTYP USR02_USTYP_HEADER,
+				A_V_USERNAME_HEADER.V_USERNAME_NAME_TEXT V_USERNAME_NAME_TEXT_HEADER,
+				A_DD07T_USTYP_HEADER.DD07T_DDTEXT USTYP_DDTEXT_HEADER,
+				LIPS_ERNAM,
+				A_USR02_ITEM.USR02_USTYP USR02_USTYP_ITEM,
+				A_V_USERNAME_ITEM.V_USERNAME_NAME_TEXT V_USERNAME_NAME_TEXT_ITEM,
+				A_DD07T_USTYP_ITEM.DD07T_DDTEXT USTYP_DDTEXT_ITEM,
+				IIF(ISNULL(A_USR02_HEADER.USR02_USTYP, '') = 'A' OR ISNULL(A_USR02_ITEM.USR02_USTYP, '') = 'A', 'X', '') ZF_DELIVERY_WITH_DIALOG_USER, 
+				LIKP_ERDAT,
+				LIPS_ERDAT,
+				LIKP_LFDAT,
+				LIKP_BLDAT,
+				LIKP_VKORG, -- Sale organization
+				TVKOT_VTEXT,
+				LIKP_LFART, -- Delivery type
+				TVLKT_VTEXT,
+				LIPS_PSTYV,
+				TVAPT_VTEXT,
+				LIKP_KUNNR, -- Sold to party
+				A_KNA1_KUNNR.KNA1_NAME1 KNA1_NAME1_KUNNR,
+				LIKP_KUNAG, -- Ship to party
+				A_KNA1_KUNAG.KNA1_NAME1 KNA1_NAME1_KUNAG,
+				LIPS_MATNR, -- Material
+				MAKT_MAKTX,
+				LIPS_MATKL, -- Material group
+				T023T_WGBEZ,
+				LIPS_VRKME,
+				LIPS_LFIMG, -- Quantity
+				LIPS_ARKTX,
+				LIPS_VGBEL,
+				LIPS_VGPOS
+
+		INTO B18_10_IT_COPA_DELIVERY
+		FROM A_LIKP
+		INNER JOIN A_LIPS
+		ON LIKP_VBELN = LIPS_VBELN
+
+		-- Get user information of delivery header
+		LEFT JOIN A_USR02 A_USR02_HEADER
+		ON A_USR02_HEADER.USR02_BNAME = LIKP_ERNAM
+
+		LEFT JOIN A_V_USERNAME A_V_USERNAME_HEADER
+		ON  A_V_USERNAME_HEADER.V_USERNAME_BNAME = LIKP_ERNAM
+
+		LEFT JOIN A_DD07T A_DD07T_USTYP_HEADER
+		ON A_DD07T_USTYP_HEADER.DD07T_DOMNAME = 'XUUSTYP' AND
+		   A_DD07T_USTYP_HEADER.DD07T_DOMVALUE_L = A_USR02_HEADER.USR02_USTYP COLLATE SQL_Latin1_General_CP1_CS_AS
+
+		-- Get user information of delivery item
+		LEFT JOIN A_USR02 A_USR02_ITEM
+		ON  A_USR02_ITEM.USR02_BNAME = LIPS_ERNAM
+
+		LEFT JOIN A_V_USERNAME A_V_USERNAME_ITEM
+		ON A_V_USERNAME_ITEM.V_USERNAME_BNAME = LIPS_ERNAM
+
+		LEFT JOIN A_DD07T A_DD07T_USTYP_ITEM
+		ON A_DD07T_USTYP_ITEM.DD07T_DOMNAME = 'XUUSTYP' AND
+		   A_DD07T_USTYP_ITEM.DD07T_DOMVALUE_L = A_USR02_ITEM.USR02_USTYP COLLATE SQL_Latin1_General_CP1_CS_AS
+
+		-- Sale organization description
+		LEFT JOIN A_TVKOT
+		ON TVKOT_SPRAS IN ('E', 'EN') AND
+		   TVKOT_VKORG = LIKP_VKORG
+
+		-- Delivery type description
+		LEFT JOIN A_TVLKT
+		ON TVLKT_SPRAS IN ('E', 'EN') AND
+		   TVLKT_LFART = LIKP_LFART
+
+		-- Ship to party
+		LEFT JOIN A_KNA1 A_KNA1_KUNNR
+		ON A_KNA1_KUNNR.KNA1_KUNNR = LIKP_KUNNR
+
+		-- Sold to party
+		LEFT JOIN A_KNA1 A_KNA1_KUNAG
+		ON A_KNA1_KUNAG.KNA1_KUNNR = LIKP_KUNAG
+
+		-- Delivery item type
+		LEFT JOIN A_TVAPT
+		ON TVAPT_SPRAS IN ('E', 'EN') AND
+		   LIPS_PSTYV = TVAPT_PSTYV
+
+		-- Material description
+		LEFT JOIN A_MAKT
+		ON MAKT_SPRAS IN ('E', 'EN') AND
+		   MAKT_MATNR = LIPS_MATNR
+
+		-- Material group description
+		LEFT JOIN A_T023T
+		ON T023T_SPRAS IN ('E', 'EN') AND
+		   T023T_MATKL = LIPS_MATKL
+
+
+		WHERE EXISTS(
+			SELECT TOP 1 1
+			FROM B18_09_IT_COPA_TRANSACTION
+			WHERE COPA_KAUFN = LIPS_VGBEL AND LIPS_VGPOS = COPA_KDPOS
+		)
+
+	/*
+		Step 7: Create a Billing documents cube for billing and dialog user analysis
+	*/
+        --EXEC SP_REMOVE_TABLES 'B18_11_TT_TCURF'
+        --SELECT TCURF_FCURR,
+        --       TCURF_TCURR,
+        --       CONVERT(DATE,CAST(99999999-TCURF_GDATU AS NVARCHAR), 112) TCURF_GDATU,
+        --       TCURF_FFACT,
+        --       TCURF_TFACT
+        --INTO B18_11_TT_TCURF
+        --FROM A_TCURF
+        --WHERE TCURF_KURST = 'M' AND TCURF_GDATU < 90000000
+
+		EXEC SP_REMOVE_TABLES 'B18_11_IT_COPA_BILLING'
+		SELECT
+			VBRK_MANDT,
+			VBRK_VBELN,
+			VBRP_POSNR,
+			VBRK_FKART,
+			TVFKT_VTEXT,
+			VBRK_FKTYP,
+			A_DD07T_FKTYP.DD07T_DDTEXT DD07T_DDTEXT_FKTYP,
+			VBRK_VBTYP,
+			A_DD07T_VBTYP.DD07T_DDTEXT DD07T_DDTEXT_VBTYP,
+			VBRP_PSTYV,
+			TVAPT_VTEXT,
+			VBRK_BUKRS,
+			T001_WAERS,
+            T001_BUTXT,
+			VBRK_VKORG,
+			TVKOT_VTEXT,
+			VBRK_ERDAT,
+			VBRP_ERDAT,
+			VBRK_FKDAT,
+			VBRK_ERNAM,
+			A_USR02_HEADER.USR02_USTYP USR02_USTYP_HEADER,
+			A_V_USERNAME_HEADER.V_USERNAME_NAME_TEXT V_USERNAME_NAME_TEXT_HEADER,
+			A_DD07T_USTYP_HEADER.DD07T_DDTEXT USTYP_DDTEXT_HEADER,
+			VBRP_ERNAM,
+			A_USR02_ITEM.USR02_USTYP USR02_USTYP_ITEM,
+			A_V_USERNAME_ITEM.V_USERNAME_NAME_TEXT V_USERNAME_NAME_TEXT_ITEM,
+			A_DD07T_USTYP_ITEM.DD07T_DDTEXT USTYP_DDTEXT_ITEM,
+			IIF(ISNULL(A_USR02_HEADER.USR02_USTYP, '') = 'A' OR ISNULL(A_USR02_ITEM.USR02_USTYP, '') = 'A', 'X', '') ZF_BILLING_WITH_DIALOG_USER,
+			VBRK_KUNAG,
+			KNA1_NAME1,
+			VBRP_MATNR,
+			MAKT_MAKTX,
+			VBRP_MATKL,
+			T023T_WGBEZ,
+			VBRP_ARKTX,
+			VBRP_VRKME,
+			VBRP_FKIMG,
+			VBRK_WAERK,
+			@currency AS CUSTOM_CURRENCY,
+			(VBRP_NETWR)*ISNULL(TCURX_FACTOR,1) ZF_VBRP_NETWR_S, -- Item net value document currency
+			((VBRP_NETWR)*ISNULL(TCURX_FACTOR,1))*VBRP_KURSK*ISNULL(TCURF_COC.TCURF_TFACT,1)/ISNULL(TCURF_COC.TCURF_FFACT,1) ZF_VBRP_NETWR_S_COC, -- Item net value company currency
+            ((VBRP_NETWR)*ISNULL(TCURX_FACTOR,1))* VBRP_KURSK * COALESCE(TCURF_COC.TCURF_TFACT,1)/COALESCE(TCURF_COC.TCURF_FFACT,1) * COALESCE(CAST(TCURR_CUC.TCURR_UKURS AS FLOAT),1) * COALESCE(TCURF_CUC.TCURF_TFACT,1) / COALESCE(TCURF_CUC.TCURF_FFACT,1) ZF_VBRP_NETWR_S_CUC -- Item net value in custom currency
+
+
+
+		INTO B18_11_IT_COPA_BILLING
+		FROM A_VBRK
+		INNER JOIN A_VBRP
+		ON VBRK_VBELN = VBRP_VBELN
+
+		-- Get user information of billing header
+		LEFT JOIN A_USR02 A_USR02_HEADER
+		ON  A_USR02_HEADER.USR02_BNAME = VBRK_ERNAM
+
+		LEFT JOIN A_V_USERNAME A_V_USERNAME_HEADER
+		ON A_V_USERNAME_HEADER.V_USERNAME_BNAME = VBRK_ERNAM
+
+		LEFT JOIN A_DD07T A_DD07T_USTYP_HEADER
+		ON A_DD07T_USTYP_HEADER.DD07T_DOMNAME = 'XUUSTYP' AND
+		   A_DD07T_USTYP_HEADER.DD07T_DOMVALUE_L = A_USR02_HEADER.USR02_USTYP COLLATE SQL_Latin1_General_CP1_CS_AS
+
+		-- Get user information of billing item
+		LEFT JOIN A_USR02 A_USR02_ITEM
+		ON A_USR02_ITEM.USR02_BNAME = VBRP_ERNAM
+
+		LEFT JOIN A_V_USERNAME A_V_USERNAME_ITEM
+		ON A_V_USERNAME_ITEM.V_USERNAME_BNAME = VBRP_ERNAM
+
+		LEFT JOIN A_DD07T A_DD07T_USTYP_ITEM
+		ON A_DD07T_USTYP_ITEM.DD07T_DOMNAME = 'XUUSTYP' AND
+		   A_DD07T_USTYP_ITEM.DD07T_DOMVALUE_L = A_USR02_ITEM.USR02_USTYP COLLATE SQL_Latin1_General_CP1_CS_AS
+
+
+		-- Get sale organization text
+		LEFT JOIN A_TVKOT
+		ON TVKOT_SPRAS IN ('E', 'EN') AND
+		   TVKOT_VKORG = VBRK_VKORG
+
+		-- Get company inforamtion
+		LEFT JOIN A_T001
+		ON T001_BUKRS = VBRK_BUKRS
+
+		-- Get billing type desc
+		LEFT JOIN A_TVFKT
+		ON TVFKT_SPRAS IN ('E', 'EN')
+		AND TVFKT_FKART = VBRK_FKART
+
+		-- Get billing category text
+		LEFT JOIN A_DD07T A_DD07T_FKTYP
+		ON A_DD07T_FKTYP.DD07T_DOMNAME = 'FKTYP' AND
+		   A_DD07T_FKTYP.DD07T_DOMVALUE_L = VBRK_FKTYP COLLATE SQL_Latin1_General_CP1_CS_AS
+
+		-- Get SD document category
+		LEFT JOIN A_DD07T A_DD07T_VBTYP
+		ON A_DD07T_VBTYP.DD07T_DOMNAME = 'VBTYP' AND
+		   A_DD07T_VBTYP.DD07T_DOMVALUE_L = VBRK_VBTYP COLLATE SQL_Latin1_General_CP1_CS_AS
+
+		-- Get billing item category
+		LEFT JOIN A_TVAPT
+		ON TVAPT_SPRAS IN ('E', 'EN')
+		AND VBRP_PSTYV = TVAPT_PSTYV
+
+		-- Get customer information
+		LEFT JOIN A_KNA1
+		ON KNA1_KUNNR = VBRK_KUNAG
+
+		-- Get material text
+		LEFT JOIN A_MAKT
+		ON MAKT_SPRAS IN ('E', 'EN') AND
+		   MAKT_MATNR = VBRP_MATNR
+
+		-- Get material group
+		LEFT JOIN A_T023T
+		ON T023T_SPRAS IN ('E', 'EN') AND
+		   VBRP_MATKL = T023T_MATKL
+
+        ---- Get currency factor to exchange amount in document cc to company cc
+        --LEFT JOIN B18_11_TT_TCURF
+        --ON B18_11_TT_TCURF.TCURF_FCURR = VBRK_WAERK AND
+        --   B18_11_TT_TCURF.TCURF_TCURR = T001_WAERS AND
+        --   B18_11_TT_TCURF.TCURF_GDATU = (
+        --       SELECT TOP 1 B18_11_TT_TCURF.TCURF_GDATU
+        --       FROM B18_11_TT_TCURF
+        --       WHERE B18_11_TT_TCURF.TCURF_FCURR = VBRK_WAERK AND 
+        --             B18_11_TT_TCURF.TCURF_TCURR = T001_WAERS AND
+        --             B18_11_TT_TCURF.TCURF_GDATU <= VBRK_FKDAT
+        --        ORDER BY B18_11_TT_TCURF.TCURF_GDATU DESC
+        --   )
+            
+
+
+		-- Get currency factor
+		LEFT JOIN B00_TCURX
+		ON TCURX_CURRKEY = VBRK_WAERK
+
+			-- Add currency factor from company currency to USD
+
+		LEFT JOIN B00_IT_TCURF TCURF_CUC
+		ON A_T001.T001_WAERS = TCURF_CUC.TCURF_FCURR
+		AND TCURF_CUC.TCURF_TCURR  = @currency  
+		AND TCURF_CUC.TCURF_GDATU = (
+			SELECT TOP 1 B00_IT_TCURF.TCURF_GDATU
+			FROM B00_IT_TCURF
+			WHERE A_T001.T001_WAERS = B00_IT_TCURF.TCURF_FCURR AND 
+					B00_IT_TCURF.TCURF_TCURR  = @currency  AND
+					B00_IT_TCURF.TCURF_GDATU <= VBRK_FKDAT
+			ORDER BY B00_IT_TCURF.TCURF_GDATU DESC
+			)
+		-- Add exchange rate from company currency to USD
+		LEFT JOIN B00_IT_TCURR TCURR_CUC
+			ON A_T001.T001_WAERS = TCURR_CUC.TCURR_FCURR
+			AND TCURR_CUC.TCURR_TCURR  = @currency  
+			AND TCURR_CUC.TCURR_GDATU = (
+				SELECT TOP 1 B00_IT_TCURR.TCURR_GDATU
+				FROM B00_IT_TCURR
+				WHERE A_T001.T001_WAERS = B00_IT_TCURR.TCURR_FCURR AND 
+						B00_IT_TCURR.TCURR_TCURR  = @currency  AND
+						B00_IT_TCURR.TCURR_GDATU <= VBRK_FKDAT
+				ORDER BY B00_IT_TCURR.TCURR_GDATU DESC
+				) 
+
+		-- Add currency factor from document currency to local currency
+
+		LEFT JOIN B00_IT_TCURF TCURF_COC
+		ON VBRK_WAERK = TCURF_COC.TCURF_FCURR
+		AND TCURF_COC.TCURF_TCURR  = T001_WAERS  
+		AND TCURF_COC.TCURF_GDATU = (
+			SELECT TOP 1 B00_IT_TCURF.TCURF_GDATU
+			FROM B00_IT_TCURF
+			WHERE VBRK_WAERK = B00_IT_TCURF.TCURF_FCURR AND 
+					B00_IT_TCURF.TCURF_TCURR  = T001_WAERS  AND
+					B00_IT_TCURF.TCURF_GDATU <= VBRK_FKDAT
+			ORDER BY B00_IT_TCURF.TCURF_GDATU DESC
+			)
+
+		WHERE EXISTS(
+			SELECT TOP 1 1
+			FROM B18_09_IT_COPA_TRANSACTION
+			WHERE COPA_COPA_AWTYP = 'VBRK' AND COPA_RBELN = VBRK_VBELN AND COPA_RPOSN = VBRP_POSNR
+		)
+
+/*--Step 9
+-- Rename the fields for Qlik
+*/
+
+EXEC SP_RENAME_FIELD 'B18_', 'B18_09_IT_COPA_TRANSACTION'
+EXEC SP_RENAME_FIELD 'B18B_', 'B18B_08_IT_COPA_HIERARCHY_VALUE'
+EXEC SP_RENAME_FIELD 'B18_10_', 'B18_10_IT_COPA_DELIVERY'
+EXEC SP_RENAME_FIELD 'B18_11_', 'B18_11_IT_COPA_BILLING'
+/* log end of procedure*/
+INSERT INTO [DBO].[LOG_SP_EXECUTION] ([DATABASE],[OBJECT],[OBJECT_TYPE],[USER],[DATE],[TIME],[DESCRIPTION],[TABLE],[ROWS])
+SELECT DB_NAME(),OBJECT_NAME(@@PROCID),'P',SYSTEM_USER,CONVERT(date,GETDATE()),CONVERT(time,GETDATE()),'Procedure finished',NULL,NULL
+GO

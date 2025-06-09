@@ -1,0 +1,15 @@
+USE [DIVA_SOK_WARRANTY_DATA]
+GO
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+CREATE FUNCTION [dbo].[ReplaceMultipleSpaces](@input NVARCHAR(MAX))
+RETURNS NVARCHAR(MAX)
+AS
+BEGIN
+    WHILE CHARINDEX(N'  ', @input) > 0
+        SET @input = REPLACE(@input, N'  ', N' ')
+    RETURN @input
+END
+GO

@@ -1,0 +1,41 @@
+USE [DIVA_SAP_USAGE_S4]
+GO
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+CREATE PROCEDURE [dbo].[script_BC14_PAHI_AM_PARAMETER]
+AS
+--DYNAMIC_SCRIPT_START
+--Script objective : Create  History of system, DB and SAP parameter data cube
+
+--Step 0 Create the AM table for test sample (for testing only, ignore when get the real test sample)
+--EXEC SP_DROPTABLE AM_TEST_PARAM
+--SELECT '' AS TEST_PARAM_PARTYPE,
+--'' AS TEST_PARAM_HOSTNAME,
+--'' AS TEST_PARAM_SYSTEMID,
+--'' AS TEST_PARAM_PARDATE,
+--'' AS TEST_PARAM_PARNAME,
+--'' AS TEST_PARAM_PARNAME_DESCRIPTION,
+--'' AS TEST_PARAM_TEST_PARAM_TEST_VALUE, 
+--'' AS TEST_PARAM_C_NPARAMTOTEST,
+--'' AS TEST_PARAM_C_CPARAMGTTEST
+--INTO AM_TEST_PARAM
+
+--Step 1 get the inforamtion about history of system, database and SAP parameter
+--Add the information about test sample from AM_TABLE
+EXEC SP_DROPTABLE BC14_01_IT_PAHI_ADD_AM_PARAMETER_TEST
+
+SELECT DISTINCT A_PAHI.* ,AM_PAHI_PARNAME_DESC,AM_PAHI_TEST_VALUE
+INTO BC14_01_IT_PAHI_ADD_AM_PARAMETER_TEST
+FROM A_PAHI
+--Add the information about the test parameters
+LEFT JOIN AM_PAHI_TEST_VALUE
+ON 
+PAHI_PARNAME=AM_PAHI_PARNAME
+
+
+--Rename the fields
+EXEC SP_RENAME_FIELD 'BC14_01_','BC14_01_IT_PAHI_ADD_AM_PARAMETER_TEST'
+
+GO

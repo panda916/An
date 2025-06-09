@@ -1,0 +1,125 @@
+USE [DIVA_ASAP_TEST_DATA]
+GO
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+-- =============================================
+-- Author:		<thuan.tran@aufinia.com>
+-- Create date: <Feb 1, 2023>
+-- Description:	<Create and update AM GLOBALS for all region in ECC>
+-- =============================================
+CREATE      PROCEDURE [dbo].[A_000_CREATE/UPDATE_AM_GLOBALS](@date1 NVARCHAR(MAX), 
+																@date2 NVARCHAR(MAX),
+															   -- @downloaddate NVARCHAR(MAX),
+																@path NVARCHAR(MAX),
+																@year NVARCHAR(MAX))
+AS
+BEGIN
+
+-- Step 1 / Create new AM_GLOBALS table without data.
+
+	EXEC SP_REMOVE_TABLES 'AM_GLOBALS'
+
+	CREATE TABLE [dbo].[AM_GLOBALS](
+		[GLOBALS_PARAMETER] [nvarchar](1000) NULL,
+		[GLOBALS_VALUE] [nvarchar](1000) NULL,
+		[GLOBALS_DESCRIPTION] [nvarchar](1000) NULL
+	) 
+-- Step 2 / Insert value	
+
+	INSERT [dbo].[AM_GLOBALS] ([GLOBALS_PARAMETER], [GLOBALS_VALUE], [GLOBALS_DESCRIPTION]) VALUES (N'id', N'PRP', N'System name')
+	INSERT [dbo].[AM_GLOBALS] ([GLOBALS_PARAMETER], [GLOBALS_VALUE], [GLOBALS_DESCRIPTION]) VALUES (N'currency', N'USD', N'Reporting currency. Required')
+	INSERT [dbo].[AM_GLOBALS] ([GLOBALS_PARAMETER], [GLOBALS_VALUE], [GLOBALS_DESCRIPTION]) VALUES (N'date1', N'', N'Scope - date from. Required')
+	INSERT [dbo].[AM_GLOBALS] ([GLOBALS_PARAMETER], [GLOBALS_VALUE], [GLOBALS_DESCRIPTION]) VALUES (N'date2', N'', N'Scope - date to. Required')
+	INSERT [dbo].[AM_GLOBALS] ([GLOBALS_PARAMETER], [GLOBALS_VALUE], [GLOBALS_DESCRIPTION]) VALUES (N'dateformat', N'ymd', N'Date syntax format. Required')
+	INSERT [dbo].[AM_GLOBALS] ([GLOBALS_PARAMETER], [GLOBALS_VALUE], [GLOBALS_DESCRIPTION]) VALUES (N'downloaddate', N'', N'Date of download. Required')
+	INSERT [dbo].[AM_GLOBALS] ([GLOBALS_PARAMETER], [GLOBALS_VALUE], [GLOBALS_DESCRIPTION]) VALUES (N'exchangeratetype', N'M', N'Exchange rate type used (see table T001A) for determing the exchange rates')
+	INSERT [dbo].[AM_GLOBALS] ([GLOBALS_PARAMETER], [GLOBALS_VALUE], [GLOBALS_DESCRIPTION]) VALUES (N'LIMIT_RECORDS', N'0', N'Enter 0 to run on full data sets or 100 to limit to 100 lines')
+	INSERT [dbo].[AM_GLOBALS] ([GLOBALS_PARAMETER], [GLOBALS_VALUE], [GLOBALS_DESCRIPTION]) VALUES (N'language1', N'EN', N'Primary language. Required')
+	INSERT [dbo].[AM_GLOBALS] ([GLOBALS_PARAMETER], [GLOBALS_VALUE], [GLOBALS_DESCRIPTION]) VALUES (N'language2', N'E', N'Secondary languageq. Required')
+	INSERT [dbo].[AM_GLOBALS] ([GLOBALS_PARAMETER], [GLOBALS_VALUE], [GLOBALS_DESCRIPTION]) VALUES (N'path', N'', N'Raw data location. Required')
+	INSERT [dbo].[AM_GLOBALS] ([GLOBALS_PARAMETER], [GLOBALS_VALUE], [GLOBALS_DESCRIPTION]) VALUES (N'SAP_DDIC_version', N'', N'(SAP46C SAP47 SAPECC50 SAPECC60). Version of SAP data dictionary. Required for staging data.')
+	INSERT [dbo].[AM_GLOBALS] ([GLOBALS_PARAMETER], [GLOBALS_VALUE], [GLOBALS_DESCRIPTION]) VALUES (N'year', N'', N'Scope - year. Required')
+	INSERT [dbo].[AM_GLOBALS] ([GLOBALS_PARAMETER], [GLOBALS_VALUE], [GLOBALS_DESCRIPTION]) VALUES (N'new GL', N'Y', N'Y for new GL with FAGLFLEXT, N for Old GL with GLT0')
+	INSERT [dbo].[AM_GLOBALS] ([GLOBALS_PARAMETER], [GLOBALS_VALUE], [GLOBALS_DESCRIPTION]) VALUES (N'custom_currency_field', N'DMBTR', NULL)
+	INSERT [dbo].[AM_GLOBALS] ([GLOBALS_PARAMETER], [GLOBALS_VALUE], [GLOBALS_DESCRIPTION]) VALUES (N'ZV_TB_RRCTY', N'0', N'0 for new gl and * for old gl')
+	INSERT [dbo].[AM_GLOBALS] ([GLOBALS_PARAMETER], [GLOBALS_VALUE], [GLOBALS_DESCRIPTION]) VALUES (N'COPA_TABLE_NAME', N'', N'INPUT COPA TABLE NAME TO THIS LINE')
+	INSERT [dbo].[AM_GLOBALS] ([GLOBALS_PARAMETER], [GLOBALS_VALUE], [GLOBALS_DESCRIPTION]) VALUES (N'ZV_TB_RLDNR', N'0L', N'ledger type which is used in DV02')
+	INSERT [dbo].[AM_GLOBALS] ([GLOBALS_PARAMETER], [GLOBALS_VALUE], [GLOBALS_DESCRIPTION]) VALUES (N'ZV_SAME_QUARTER_BY_BLDAT', N'X', N'put X value for region that require Quarter by BLDAT, instead of T009B POPER')
+	INSERT [dbo].[AM_GLOBALS] ([GLOBALS_PARAMETER], [GLOBALS_VALUE], [GLOBALS_DESCRIPTION]) VALUES (N'GL_ACCT_COST_CENTER', N'S6*', N'GL accounts start S6* in cost center dashboard (RTR)')
+
+
+-- Step 3 / Update value for AM_GLOBALS base on each region
+-- 3.1 JPN
+	IF CHARINDEX('TURKEY', DB_NAME()) <> 0 
+	BEGIN
+		UPDATE AM_GLOBALS
+		SET GLOBALS_VALUE = 'TURKEY_DD03L'
+		WHERE GLOBALS_PARAMETER = 'SAP_DDIC_version'
+		
+		UPDATE AM_GLOBALS
+		SET GLOBALS_VALUE = 'A_CE1TR00'
+		WHERE GLOBALS_PARAMETER = 'COPA_TABLE_NAME'
+
+		-- Update AM_GLOBALS based on input value
+		UPDATE AM_GLOBALS
+		SET GLOBALS_VALUE = @date1
+		WHERE GLOBALS_PARAMETER = 'date1'
+
+		UPDATE AM_GLOBALS
+		SET GLOBALS_VALUE = @date2
+		WHERE GLOBALS_PARAMETER = 'date2'
+
+		UPDATE AM_GLOBALS
+		SET GLOBALS_VALUE = @date2
+		WHERE GLOBALS_PARAMETER = 'downloaddate'
+
+		UPDATE AM_GLOBALS
+		SET GLOBALS_VALUE = @path
+		WHERE GLOBALS_PARAMETER = 'path'
+
+		UPDATE AM_GLOBALS
+		SET GLOBALS_VALUE = @year
+		WHERE GLOBALS_PARAMETER = 'year'
+
+
+	END
+	ELSE IF CHARINDEX('RUSSIA', DB_NAME()) <> 0
+	BEGIN
+		UPDATE AM_GLOBALS
+		SET GLOBALS_VALUE = 'RUSSIA_DD03L'
+		WHERE GLOBALS_PARAMETER = 'SAP_DDIC_version'
+		
+		UPDATE AM_GLOBALS
+		SET GLOBALS_VALUE = 'A_CE1EU02'
+		WHERE GLOBALS_PARAMETER = 'COPA_TABLE_NAME'
+
+		-- Update AM_GLOBALS based on input value
+		UPDATE AM_GLOBALS
+		SET GLOBALS_VALUE = @date1
+		WHERE GLOBALS_PARAMETER = 'date1'
+
+		UPDATE AM_GLOBALS
+		SET GLOBALS_VALUE = @date2
+		WHERE GLOBALS_PARAMETER = 'date2'
+
+		UPDATE AM_GLOBALS
+		SET GLOBALS_VALUE = @date2
+		WHERE GLOBALS_PARAMETER = 'downloaddate'
+
+		UPDATE AM_GLOBALS
+		SET GLOBALS_VALUE = @path
+		WHERE GLOBALS_PARAMETER = 'path'
+
+		UPDATE AM_GLOBALS
+		SET GLOBALS_VALUE = @year
+		WHERE GLOBALS_PARAMETER = 'year'
+
+	END
+
+
+END
+
+
+GO

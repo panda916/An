@@ -1,0 +1,32 @@
+USE [DIVA_MASTER_SCRIPT_S4HANA]
+GO
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+
+create     PROC [dbo].[SP_REMOVE_TABLES_MASTER](@dbNAME NVARCHAR(MAX), @prefix NVARCHAR(MAX))
+AS
+
+DECLARE @sqlCMD NVARCHAR(1000) = 
+
+'USE ' + @dbNAME + '
+DECLARE @cmd varchar(4000)
+DECLARE cmds CURSOR FOR
+SELECT ''drop table ['' + Table_Name + '']''
+FROM INFORMATION_SCHEMA.TABLES
+WHERE Table_Name LIKE ''' + @prefix + '''
+
+OPEN cmds
+WHILE 1 = 1
+BEGIN
+    FETCH cmds INTO @cmd
+    IF @@fetch_status != 0 BREAK
+    EXEC(@cmd)
+	PRINT(@cmd)
+END
+CLOSE cmds;
+DEALLOCATE cmds'
+
+EXEC SP_EXECUTESQL @sqlCMD
+GO

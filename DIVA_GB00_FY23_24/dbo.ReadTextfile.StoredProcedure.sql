@@ -1,0 +1,12 @@
+USE [DIVA_GB00_FY23_24]
+GO
+SET ANSI_NULLS OFF
+GO
+SET QUOTED_IDENTIFIER OFF
+GO
+CREATE PROCEDURE [dbo].[ReadTextfile]
+	@path [nvarchar](max)
+WITH EXECUTE AS CALLER
+AS
+EXTERNAL NAME [CLRReadLines].[ReadWriteFileTips].[ReadTextFile]
+GO

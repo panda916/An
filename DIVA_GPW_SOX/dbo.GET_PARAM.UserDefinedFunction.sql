@@ -1,0 +1,20 @@
+USE [DIVA_GPW_SOX]
+GO
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+CREATE   FUNCTION [dbo].[GET_PARAM]
+  (@value varchar(255))
+  RETURNS varchar(255)
+  WITH EXEC AS CALLER
+  AS
+  BEGIN
+  DECLARE @result varchar(255)
+
+    SELECT @result = GLOBALS_VALUE FROM [dbo].AM_GLOBALS WHERE [dbo].[AM_GLOBALS].[GLOBALS_PARAMETER] = @value
+    RETURN @result
+  END
+
+
+GO

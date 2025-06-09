@@ -1,0 +1,16 @@
+USE [DIVA_TEST_PROGRESS]
+GO
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+
+CREATE   FUNCTION [dbo].[ADD_LEADING_ZEROES](@Temp VarChar(1000))
+Returns VarChar(1000)
+AS
+Begin
+	Return	IIF(ISNUMERIC(@Temp) = 1 AND LEN(@Temp) = 1, '0' + @Temp, @Temp)
+End
+
+
+GO

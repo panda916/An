@@ -1,0 +1,71 @@
+USE [DIVA_SAP_USAGE_ECC]
+GO
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+CREATE   PROCEDURE [dbo].[script_SU78_Check no users can do debug in production]
+WITH EXECUTE AS CALLER
+AS
+--DYNAMIC_SCRIPT_START
+
+
+-- Script object: Check users can do debug in production
+-- Step 1: Reformat data of ZF_AGR_UST12_VON and ZF_AGR_UST12_BIS field
+-- Step 1.1: insert data from SOD cube into new table
+EXEC SP_REMOVE_TABLES 'SU78_01_IT_UST10S_AGR_PROFILE_OBJCT_AUTH_FIELD_VALUE'
+SELECT *
+INTO SU78_01_IT_UST10S_AGR_PROFILE_OBJCT_AUTH_FIELD_VALUE
+FROM B22_09_IT_UST10S_AGR_PROFILE_OBJCT_AUTH_FIELD_VALUE
+
+-- Step 1.2: reformat data of ZF_AGR_UST12_VON and ZF_AGR_UST12_BIS field 
+--Update the combined user auhorization object list, to convert the * symbol to % (SQL uses % as regular expression to re-present many characters instead of *)
+	UPDATE SU78_01_IT_UST10S_AGR_PROFILE_OBJCT_AUTH_FIELD_VALUE
+	SET ZF_AGR_UST12_VON = REPLACE(ZF_AGR_UST12_VON, '%', '[#]')
+
+	UPDATE SU78_01_IT_UST10S_AGR_PROFILE_OBJCT_AUTH_FIELD_VALUE
+	SET ZF_AGR_UST12_VON = REPLACE(ZF_AGR_UST12_VON, '*', '%'),
+	ZF_AGR_UST12_BIS = REPLACE(ZF_AGR_UST12_BIS, '*', '%')
+
+	--Update the combined user auhorization object list, we will ingore $ values because SAP also skips them in the initial authorization check.
+	UPDATE SU78_01_IT_UST10S_AGR_PROFILE_OBJCT_AUTH_FIELD_VALUE
+	SET ZF_AGR_UST12_VON = '',
+	ZF_AGR_UST12_BIS = ''
+	WHERE ZF_AGR_UST12_VON LIKE '$%'
+
+	--Update the combined user auhorization object list, we will ingore ', '' values because SAP also skips them in the initial authorization check.
+	UPDATE SU78_01_IT_UST10S_AGR_PROFILE_OBJCT_AUTH_FIELD_VALUE
+	SET ZF_AGR_UST12_VON = '%',
+	ZF_AGR_UST12_BIS = ''
+	WHERE ZF_AGR_UST12_VON = '''' OR ZF_AGR_UST12_VON = ''''''
+
+	--Remove the authorization object field with blank value to speed up the script.
+	DELETE SU78_01_IT_UST10S_AGR_PROFILE_OBJCT_AUTH_FIELD_VALUE
+	WHERE ZF_AGR_UST12_VON = ''
+
+-- Step 2: Just get user can debug in production
+EXEC SP_REMOVE_TABLES 'SU78_02_RT_USER_DEBUG_IN_PRODUCTION'
+SELECT A.*,
+	USER_ADDR_NAME_TEXTC,
+	USER_ADDR_DEPARTMENT,
+	USER_ADDR_NAME1,
+	USR02_USTYP,
+	ZF_USR02_USTYP_SHORT_DESC,
+	USR02_CLASS,
+	USGRPT_TEXT
+INTO SU78_02_RT_USER_DEBUG_IN_PRODUCTION
+FROM SU78_01_IT_UST10S_AGR_PROFILE_OBJCT_AUTH_FIELD_VALUE AS A
+LEFT JOIN A_USER_ADDR
+ON A.USR02_BNAME = USER_ADDR_BNAME
+LEFT JOIN BC16_01_IT_USR02_USERS
+ON A.USR02_BNAME = BC16_01_IT_USR02_USERS.USR02_BNAME
+-- Just get user can debug in production
+WHERE ZF_AGR_UST12_OBJCT = 'S_DEVELOP'
+AND ZF_AGR_UST12_FIELD = 'OBJTYPE'
+AND (ZF_AGR_UST12_VON = '%'
+	OR (ZF_AGR_UST12_BIS = '' AND 'DEBUG' LIKE ZF_AGR_UST12_VON)
+	OR 'DEBUG' BETWEEN ZF_AGR_UST12_VON AND ZF_AGR_UST12_BIS)
+
+-- Rename the fields
+EXEC SP_RENAME_FIELD'SU78_02_', 'SU78_02_RT_USER_DEBUG_IN_PRODUCTION'
+GO

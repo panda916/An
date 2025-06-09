@@ -1,0 +1,27 @@
+USE [DIVA_MASTER_SCRIPT]
+GO
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+
+CREATE     PROC [dbo].[SP_REMOVE_TABLES](@prefix NVARCHAR(MAX))
+AS
+
+DECLARE @cmd varchar(4000)
+DECLARE cmds CURSOR FOR
+SELECT 'drop table [' + Table_Name + ']'
+FROM INFORMATION_SCHEMA.TABLES
+WHERE Table_Name LIKE @prefix
+
+OPEN cmds
+WHILE 1 = 1
+BEGIN
+    FETCH cmds INTO @cmd
+    IF @@fetch_status != 0 BREAK
+    EXEC(@cmd)
+	PRINT(@cmd)
+END
+CLOSE cmds;
+DEALLOCATE cmds
+GO

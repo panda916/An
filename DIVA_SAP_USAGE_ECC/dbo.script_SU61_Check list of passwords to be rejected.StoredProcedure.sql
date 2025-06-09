@@ -1,0 +1,25 @@
+USE [DIVA_SAP_USAGE_ECC]
+GO
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+
+CREATE PROCEDURE [dbo].[script_SU61_Check list of passwords to be rejected]
+AS
+--DYNAMIC_SCRIPT_START
+
+--Script objective:Check list of passwords to be rejected
+
+--Step 1 Get the list of illigal passwords
+EXEC SP_DROPTABLE SU61_01_RT_USR40_AUTO_REJECT_PASSWORD
+
+SELECT *
+INTO SU61_01_RT_USR40_AUTO_REJECT_PASSWORD
+FROM A_USR40
+
+--Rename the field
+EXEC SP_RENAME_FIELD 'SU61_01_','SU61_01_RT_USR40_AUTO_REJECT_PASSWORD'
+
+
+GO

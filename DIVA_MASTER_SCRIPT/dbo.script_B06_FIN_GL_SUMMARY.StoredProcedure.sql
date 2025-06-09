@@ -1,0 +1,521 @@
+USE [DIVA_MASTER_SCRIPT]
+GO
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+
+
+
+--ALTER PROCEDURE [dbo].[B06_FIN_GL_SUMMARY] 
+CREATE      PROC [dbo].[script_B06_FIN_GL_SUMMARY]
+WITH EXECUTE AS CALLER
+AS
+--DYNAMIC_SCRIPT_START
+
+/* Initiate the log */  
+--Create database log table if it does not exist
+IF OBJECT_ID('_DatabaseLogTable', 'U') IS NULL BEGIN CREATE TABLE [dbo].[_DatabaseLogTable] ([Database] nvarchar(max) NULL,[Object] nvarchar(max) NULL,[Object Type] nvarchar(max) NULL,[User] nvarchar(max) NULL,[Date] date NULL,[Time] time NULL,[Description] nvarchar(max) NULL,[Table] nvarchar(max),[Rows] int) END
+
+--Log start of procedure
+INSERT INTO [dbo].[_DatabaseLogTable] ([Database],[Object],[Object Type],[User],[Date],[Time],[Description],[Table],[Rows])
+SELECT DB_NAME(),OBJECT_NAME(@@PROCID),'P',SYSTEM_USER,CONVERT(date,GETDATE()),CONVERT(time,GETDATE()),'Procedure started',NULL,NULL
+
+
+/* Initialize parameters from globals table */
+
+     DECLARE 	 
+			 @currency nvarchar(max)			= (SELECT [GLOBALS_VALUE] FROM [AM_GLOBALS] WHERE [GLOBALS_PARAMETER] = 'currency')
+			,@date1 nvarchar(max)				= (SELECT [GLOBALS_VALUE] FROM [AM_GLOBALS] WHERE [GLOBALS_PARAMETER] = 'date1')
+			,@date2 nvarchar(max)				= (SELECT [GLOBALS_VALUE] FROM [AM_GLOBALS] WHERE [GLOBALS_PARAMETER] = 'date2')
+			,@downloaddate nvarchar(max)		= (SELECT [GLOBALS_VALUE] FROM [AM_GLOBALS] WHERE [GLOBALS_PARAMETER] = 'downloaddate')
+			,@exchangeratetype nvarchar(max)	= (SELECT [GLOBALS_VALUE] FROM [AM_GLOBALS] WHERE [GLOBALS_PARAMETER] = 'exchangeratetype')
+			,@language1 nvarchar(max)			= (SELECT [GLOBALS_VALUE] FROM [AM_GLOBALS] WHERE [GLOBALS_PARAMETER] = 'language1')
+			,@language2 nvarchar(max)			= (SELECT [GLOBALS_VALUE] FROM [AM_GLOBALS] WHERE [GLOBALS_PARAMETER] = 'language2')
+			,@year nvarchar(max)				= (SELECT [GLOBALS_VALUE] FROM [AM_GLOBALS] WHERE [GLOBALS_PARAMETER] = 'year')
+			,@id nvarchar(max)					= (SELECT [GLOBALS_VALUE] FROM [AM_GLOBALS] WHERE [GLOBALS_PARAMETER] = 'id')
+			--,@ZV_LIMIT nvarchar(max)		    = (SELECT [GLOBALS_VALUE] FROM [AM_GLOBALS] WHERE [GLOBALS_PARAMETER] = 'ZV_LIMIT')	 
+			,@GL_GROUP nvarchar(max) = (SELECT GLOBALS_DESCRIPTION  FROM [AM_GLOBALS] WHERE [GLOBALS_PARAMETER] = 'GL_ACCT_COST_CENTER')
+
+
+      
+
+DECLARE @dateformat varchar(3)
+SET @dateformat   = (SELECT dbo.get_param('dateformat'))
+SET DATEFORMAT @dateformat;
+
+
+/*Change history comments*/
+
+/*
+	Title			: [B07_RULE_RTR_JE_SUM]
+	Description	    : JE Summary by manual and regular postings 
+    
+	--------------------------------------------------------------
+	Update history
+	--------------------------------------------------------------
+	Date			    |	Who			|	Description
+	14-01-2016    			FT    			Initial version  
+	13-02-2017     			NC      		Added Data base Logs and reformatted code structure
+	19-03-2017		        CW                      Update and standardisation for SID
+
+*/
+
+
+/*In case we are in test mode according to the globals table*/
+
+/*--Step 1
+-- Create a summary version of the GL in order to be able to load essential GL information into Qlik
+-- (because entire GL would be too heavy)
+-- Rows are being removed due to the following filters (WHERE): 
+--     Journal entry status (BKPF_BSTAT) is blank (meaning that it is Normal, and not pre-posting, parked or noted)
+--     The journal entry was posted in the period (BKPF_BUDAT is between the start and end dates 
+--     found in the globals table
+-- Fields are being calculated mentioned in the SELECT statement below
+*/
+
+set rowcount 0
+
+EXEC sp_droptable 	'B06_01_IT_GIN_GL_SUMMARY'
+
+
+SELECT 
+       B04_BKPF_MANDT BKPF_MANDT
+      ,B04_BSEG_BUKRS BSEG_BUKRS
+      ,B04_BSEG_GSBER BSEG_GSBER
+      ,B04_BSEG_GJAHR BSEG_GJAHR
+	  ,B04_BKPF_MONAT BKPF_MONAT
+      ,B04_ZF_BKPF_GJAHR_MONAT ZF_BKPF_GJAHR_MONAT
+      ,B04_ZF_BKPF_MONAT_DESC ZF_BKPF_MONAT_DESC
+      ,B04_ZF_BKPF_BUDAT_YEAR_MNTH ZF_BKPF_BUDAT_YEAR_MNTH
+      ,B04_ZF_BKPF_BUDAT_FQ ZF_BKPF_BUDAT_FQ
+      ,B04_ZF_ENTRY_TYPE ZF_ENTRY_TYPE
+      ,B04_BSEG_HKONT BSEG_HKONT
+      ,B04_BKPF_BLART BKPF_BLART
+      ,B04_BKPF_USNAM BKPF_USNAM
+      ,B04_BSEG_BSCHL BSEG_BSCHL
+	  ,B04_BSEG_BELNR BSEG_BELNR
+	  ,B04_BSEG_PRCTR BSEG_PRCTR
+	  ,B04_BSEG_KOSTL BSEG_KOSTL
+	  ,B04_BSEG_UMSKZ BSEG_UMSKZ
+	  ,B04_BKPF_BSTAT BKPF_BSTAT
+      ,B04_BSEG_LIFNR BSEG_LIFNR
+      ,B04_BSEG_KUNNR BSEG_KUNNR
+      ,B04_BSEG_KOKRS BSEG_KOKRS
+      ,B04_BKPF_BLDAT BKPF_BLDAT
+      ,B04_BKPF_BUDAT BKPF_BUDAT
+      ,B04_BKPF_AWTYP BKPF_AWTYP
+      ,B04_BKPF_XBLNR BKPF_XBLNR
+      ,B04_AM_GLOBALS_CURRENCY AM_GLOBALS_CURRENCY
+      ,B04_ZF_BKPF_BSTAT_DESC ZF_BKPF_BSTAT_DESC
+      ,B04_BSEG_KOART BSEG_KOART
+      ,B04_BSEG_SGTXT BSEG_SGTXT
+      ,B04_BSEG_AUGDT BSEG_AUGDT
+      ,B04_BSEG_AUGBL BSEG_AUGBL
+      ,B04_BSEG_AUGGJ BSEG_AUGGJ
+      ,B04_BSEG_SHKZG BSEG_SHKZG
+	  ,IIF(B04_BSEG_SHKZG = 'S', 1, 0) ZF_DEBIT
+      ,B04_ZF_BSEG_SHKZG_DESC ZF_BSEG_SHKZG_DESC
+      ,ZF_HEADER_INDEX
+	  ,COUNT(*) ZF_NUM_GL_LINES
+      ,B04_BKPF_HWAER BKPF_HWAER
+      ,B04_BKPF_WAERS BKPF_WAERS
+      ,SUM(B04_ZF_BSEG_DMBTR_S) ZF_BSEG_DMBTR_S_COC
+      ,SUM(B04_ZF_BSEG_WRBTR_S_DOC) ZF_BSEG_WRBTR_S_DOC
+	  ,SUM(B04_ZF_BSEG_DMBTR_S_CUC) ZF_BSEG_DMBTR_S_CUC
+	  ,SUM(B04_ZF_BSEG_DMBE2_S) ZF_BSEG_DMBE2_S
+	  ,SUM(B04_ZF_BSEG_DMBE3_S) ZF_BSEG_DMBE3_S
+      ,ROW_NUMBER() OVER (ORDER BY B04_BSEG_BUKRS) AS ZF_HEADER_KEY
+	  ,B04_BKPF_CPUDT AS BKPF_CPUDT
+-- Add some fields to make Entry data analysis dashboard in RTR app.
+	  ,				
+	  IIF (					
+			B04_BKPF_BUDAT < B04_BKPF_CPUDT 		
+			AND 		
+			(		
+				-- Entry date in 25th to 3rd	
+					
+				(	
+					DAY(B04_BKPF_CPUDT) BETWEEN 25 AND 31 AND DAY(B04_BKPF_BUDAT) BETWEEN 1 AND 24
+				)	
+				OR	
+				(	
+					DAY(B04_BKPF_CPUDT) BETWEEN 1 AND 3 AND DAY(B04_BKPF_BUDAT) BETWEEN 1 AND 24 AND MONTH(B04_BKPF_CPUDT) <> MONTH(B04_BKPF_BUDAT)
+				)	
+					
+			), 'Yes','No') AS ZF_BELNR_CPUDT_BUDAT_FLAG	,
+-- Thuan 20/08/2021 add 2 filter relate to Cost center dashboard.
+		CAST('' AS varchar(3)) AS ZF_GL_DEBIT_GL1_CREDIT_GL3,
+		CAST('' AS varchar(3)) AS ZF_GL_CREDIT_GL1_DEBIT_GL3,
+		CAST('' AS varchar(3)) AS ZF_GL_DEBIT_GL2_CREDIT_GL4,
+		CAST('' AS varchar(3)) AS ZF_GL_CREDIT_GL2_DEBIT_GL4
+	
+	INTO B06_01_IT_GIN_GL_SUMMARY
+	FROM B04_11_IT_FIN_GL
+    LEFT JOIN B00_HEADER_INDEX ON B04_BSEG_BUKRS = ZF_BUKRS AND B04_BSEG_GJAHR = ZF_GJAHR AND B04_BSEG_BELNR = ZF_BELNR
+	GROUP BY 
+       B04_BKPF_MANDT
+      ,B04_BSEG_BUKRS
+      ,B04_BSEG_GSBER
+	  ,B04_BSEG_BELNR
+      ,B04_BSEG_GJAHR
+      ,B04_BSEG_LIFNR
+      ,B04_BSEG_KUNNR
+      ,B04_BSEG_KOKRS
+	  ,B04_BSEG_PRCTR
+	  ,B04_BSEG_KOSTL
+	  ,B04_BSEG_UMSKZ
+	  ,B04_BKPF_MONAT
+      ,B04_BKPF_BLDAT
+      ,B04_BKPF_BUDAT
+      ,B04_BSEG_KOART
+      ,B04_BSEG_SGTXT
+      ,B04_BSEG_AUGDT
+      ,B04_BSEG_AUGBL
+      ,B04_BSEG_AUGGJ
+      ,B04_BKPF_AWTYP
+      ,B04_ZF_BKPF_BSTAT_DESC
+      ,B04_BKPF_XBLNR
+      ,ZF_HEADER_INDEX
+      ,B04_ZF_BKPF_GJAHR_MONAT
+      ,B04_ZF_BKPF_MONAT_DESC
+      ,B04_ZF_BKPF_BUDAT_YEAR_MNTH
+      ,B04_ZF_BKPF_BUDAT_FQ
+      ,B04_ZF_ENTRY_TYPE
+      ,B04_AM_GLOBALS_CURRENCY
+      ,B04_BSEG_HKONT
+      ,B04_BKPF_BLART
+      ,B04_BKPF_USNAM
+      ,B04_BSEG_BSCHL
+      ,B04_BKPF_HWAER
+      ,B04_BKPF_WAERS
+	  ,B04_BKPF_BSTAT
+      ,B04_BSEG_SHKZG
+      ,B04_ZF_BSEG_SHKZG_DESC
+	  ,B04_BKPF_CPUDT
+
+CREATE CLUSTERED INDEX IDX ON B06_01_IT_GIN_GL_SUMMARY(BSEG_BUKRS, BSEG_GSBER, BSEG_BELNR, BSEG_GJAHR, BSEG_LIFNR, BSEG_KUNNR, BSEG_KOKRS, BSEG_PRCTR, BSEG_KOSTL, BSEG_UMSKZ, BKPF_MONAT, BKPF_BLDAT, BKPF_BUDAT, BSEG_KOART, BSEG_SGTXT, BSEG_AUGBL, BSEG_AUGGJ, BKPF_AWTYP, BKPF_XBLNR, ZF_BKPF_GJAHR_MONAT, ZF_BKPF_BUDAT_FQ, ZF_ENTRY_TYPE, BSEG_HKONT, BKPF_BLART, BKPF_USNAM, BSEG_BSCHL, BKPF_HWAER, BKPF_WAERS, BKPF_BSTAT, BSEG_SHKZG,BKPF_CPUDT)
+DROP INDEX IDX ON B06_01_IT_GIN_GL_SUMMARY
+CREATE NONCLUSTERED INDEX IDX ON B06_01_IT_GIN_GL_SUMMARY(BSEG_BUKRS, BSEG_GSBER, BSEG_BELNR, BSEG_GJAHR, BSEG_LIFNR, BSEG_KUNNR, BSEG_KOKRS, BSEG_PRCTR, BSEG_KOSTL, BSEG_UMSKZ, BKPF_MONAT, BKPF_BLDAT, BKPF_BUDAT, BSEG_KOART, BSEG_SGTXT, BSEG_AUGBL, BSEG_AUGGJ, BKPF_AWTYP, BKPF_XBLNR, ZF_BKPF_GJAHR_MONAT, ZF_BKPF_BUDAT_FQ, ZF_ENTRY_TYPE, BSEG_HKONT, BKPF_BLART, BKPF_USNAM, BSEG_BSCHL, BKPF_HWAER, BKPF_WAERS, BKPF_BSTAT, BSEG_SHKZG,BKPF_CPUDT)
+
+-- Thuan 20/08/2021 add 2 filter relate to Cost center dashboard.
+-- For ECC we have 3 groups.
+
+--IF @GL_GROUP = 'Group 2'
+--	BEGIN
+---- Group2 
+---- a* or b*
+---- c* or d*
+---- This step handle : a* debit and c* credit
+--	UPDATE B06_01_IT_GIN_GL_SUMMARY
+--	SET ZF_GL_DEBIT_GL1_CREDIT_GL3 = 'Yes'
+--	WHERE BSEG_BUKRS+BSEG_GJAHR+BSEG_BELNR IN 
+--	(
+--		SELECT DISTINCT BSEG_BUKRS+BSEG_GJAHR+BSEG_BELNR FROM B06_01_IT_GIN_GL_SUMMARY
+--			WHERE BSEG_BUKRS+BSEG_GJAHR+BSEG_BELNR  IN 
+--						(
+--							SELECT DISTINCT BSEG_BUKRS+BSEG_GJAHR+BSEG_BELNR
+--							FROM B06_01_IT_GIN_GL_SUMMARY
+--							WHERE BSEG_HKONT LIKE  
+--								(
+--									SELECT REPLACE(dbo.TRIM(SUBSTRING ([GLOBALS_VALUE],0,CHARINDEX('or',[GLOBALS_VALUE]))),'*','%')  
+--									FROM [AM_GLOBALS] 
+--									WHERE [GLOBALS_PARAMETER] = 'GL_ACCT_COST_CENTER'
+--								) 
+--							AND ZF_BSEG_SHKZG_DESC ='Debit'
+--						)
+--					AND BSEG_HKONT LIKE  
+--						(
+--							SELECT REPLACE(dbo.TRIM(SUBSTRING ([GLOBALS_VALUE],0,CHARINDEX('or',[GLOBALS_VALUE]))) ,'*','%')   
+--							FROM [AM_GLOBALS] 
+--							WHERE [GLOBALS_PARAMETER] = 'GL_ACCT_COST_CENTER1'
+--						) AND ZF_BSEG_SHKZG_DESC ='Credit'
+--		)
+
+--		-- This step handle : a* credit and c* debit
+--		UPDATE B06_01_IT_GIN_GL_SUMMARY
+--		SET ZF_GL_CREDIT_GL1_DEBIT_GL3 = 'Yes'
+--		WHERE BSEG_BUKRS+BSEG_GJAHR+BSEG_BELNR IN 
+--		(
+--			SELECT DISTINCT BSEG_BUKRS+BSEG_GJAHR+BSEG_BELNR FROM B06_01_IT_GIN_GL_SUMMARY
+--				WHERE BSEG_BUKRS+BSEG_GJAHR+BSEG_BELNR  IN 
+--							(
+--								SELECT DISTINCT BSEG_BUKRS+BSEG_GJAHR+BSEG_BELNR
+--								FROM B06_01_IT_GIN_GL_SUMMARY
+--								WHERE BSEG_HKONT LIKE  
+--									(
+--										SELECT REPLACE(dbo.TRIM(SUBSTRING ([GLOBALS_VALUE],0,CHARINDEX('or',[GLOBALS_VALUE]))),'*','%')  
+--										FROM [AM_GLOBALS] 
+--										WHERE [GLOBALS_PARAMETER] = 'GL_ACCT_COST_CENTER'
+--									) 
+--								AND ZF_BSEG_SHKZG_DESC ='Credit'
+--							)
+--						AND BSEG_HKONT LIKE  
+--							(
+--								SELECT REPLACE(dbo.TRIM(SUBSTRING ([GLOBALS_VALUE],0,CHARINDEX('or',[GLOBALS_VALUE]))) ,'*','%')   
+--								FROM [AM_GLOBALS] 
+--								WHERE [GLOBALS_PARAMETER] = 'GL_ACCT_COST_CENTER1'
+--							) AND ZF_BSEG_SHKZG_DESC ='Debit'
+--		 )
+
+--		-- This step handle : b* debit and d* credit
+--		UPDATE B06_01_IT_GIN_GL_SUMMARY
+--		SET ZF_GL_DEBIT_GL2_CREDIT_GL4 = 'Yes'
+--		WHERE BSEG_BUKRS+BSEG_GJAHR+BSEG_BELNR IN 
+--		(
+--			SELECT DISTINCT BSEG_BUKRS+BSEG_GJAHR+BSEG_BELNR FROM B06_01_IT_GIN_GL_SUMMARY
+--				WHERE BSEG_BUKRS+BSEG_GJAHR+BSEG_BELNR  IN 
+--							(
+--								SELECT DISTINCT BSEG_BUKRS+BSEG_GJAHR+BSEG_BELNR
+--								FROM B06_01_IT_GIN_GL_SUMMARY
+--								WHERE BSEG_HKONT LIKE  
+--									(
+--										   SELECT REPLACE(dbo.TRIM(SUBSTRING([GLOBALS_VALUE],CHARINDEX('or',([GLOBALS_VALUE]))+2,LEN([GLOBALS_VALUE]))) ,'*','%')  
+--										   FROM [AM_GLOBALS] 
+--										   WHERE [GLOBALS_PARAMETER] = 'GL_ACCT_COST_CENTER'
+--									) 
+--								AND ZF_BSEG_SHKZG_DESC ='Debit'
+--							)
+--						AND BSEG_HKONT LIKE  
+--							(
+--										  SELECT REPLACE(dbo.TRIM(SUBSTRING([GLOBALS_VALUE],CHARINDEX('or',([GLOBALS_VALUE]))+2,LEN([GLOBALS_VALUE]))) ,'*','%')  
+--										  FROM [AM_GLOBALS] 
+--										  WHERE [GLOBALS_PARAMETER] = 'GL_ACCT_COST_CENTER1'
+--							) AND ZF_BSEG_SHKZG_DESC ='Credit'
+--		)
+--		-- This step handle : b* credit and d* debit
+--		UPDATE B06_01_IT_GIN_GL_SUMMARY
+--		SET ZF_GL_CREDIT_GL2_DEBIT_GL4 = 'Yes'
+--		WHERE BSEG_BUKRS+BSEG_GJAHR+BSEG_BELNR IN 
+--		(
+--			SELECT DISTINCT BSEG_BUKRS+BSEG_GJAHR+BSEG_BELNR FROM B06_01_IT_GIN_GL_SUMMARY
+--				WHERE BSEG_BUKRS+BSEG_GJAHR+BSEG_BELNR  IN 
+--							(
+--								SELECT DISTINCT BSEG_BUKRS+BSEG_GJAHR+BSEG_BELNR
+--								FROM B06_01_IT_GIN_GL_SUMMARY
+--								WHERE BSEG_HKONT LIKE  
+--									(
+--										   SELECT REPLACE(dbo.TRIM(SUBSTRING([GLOBALS_VALUE],CHARINDEX('or',([GLOBALS_VALUE]))+2,LEN([GLOBALS_VALUE]))) ,'*','%')  
+--										   FROM [AM_GLOBALS] 
+--										   WHERE [GLOBALS_PARAMETER] = 'GL_ACCT_COST_CENTER'
+--									) 
+--								AND ZF_BSEG_SHKZG_DESC ='Credit'
+--							)
+--						AND BSEG_HKONT LIKE  
+--							(
+--										  SELECT REPLACE(dbo.TRIM(SUBSTRING([GLOBALS_VALUE],CHARINDEX('or',([GLOBALS_VALUE]))+2,LEN([GLOBALS_VALUE]))) ,'*','%')  
+--										  FROM [AM_GLOBALS] 
+--										  WHERE [GLOBALS_PARAMETER] = 'GL_ACCT_COST_CENTER1'
+--							) AND ZF_BSEG_SHKZG_DESC ='Debit'
+--		)
+--	END
+--ELSE IF @GL_GROUP = 'Group 1'
+--	BEGIN
+---- Group 1:
+---- a*
+---- c*
+---- This step handle : a* debit and c* credit
+--	UPDATE B06_01_IT_GIN_GL_SUMMARY
+--	SET ZF_GL_DEBIT_GL1_CREDIT_GL3 = 'Yes'
+--	WHERE BSEG_BUKRS+BSEG_GJAHR+BSEG_BELNR IN 
+--	(
+--		SELECT DISTINCT BSEG_BUKRS+BSEG_GJAHR+BSEG_BELNR FROM B06_01_IT_GIN_GL_SUMMARY
+--			WHERE BSEG_BUKRS+BSEG_GJAHR+BSEG_BELNR  IN 
+--						(
+--							SELECT DISTINCT BSEG_BUKRS+BSEG_GJAHR+BSEG_BELNR
+--							FROM B06_01_IT_GIN_GL_SUMMARY
+--							WHERE BSEG_HKONT LIKE  
+--								(
+--									SELECT REPLACE(GLOBALS_VALUE,'*','%')  FROM AM_GLOBALS
+--									WHERE GLOBALS_PARAMETER  = 'GL_ACCT_COST_CENTER' 
+--								) 
+--							AND ZF_BSEG_SHKZG_DESC ='Debit'
+--						)
+--					AND BSEG_HKONT LIKE  
+--						(
+--								SELECT REPLACE(GLOBALS_VALUE,'*','%')  FROM AM_GLOBALS
+--								WHERE GLOBALS_PARAMETER  = 'GL_ACCT_COST_CENTER1' 
+--						) AND ZF_BSEG_SHKZG_DESC ='Credit'
+--		)
+
+--		-- This step handle : a* credit and c* debit
+--	UPDATE B06_01_IT_GIN_GL_SUMMARY
+--	SET ZF_GL_CREDIT_GL1_DEBIT_GL3 = 'Yes'
+--	WHERE BSEG_BUKRS+BSEG_GJAHR+BSEG_BELNR IN 
+--	(
+--		SELECT DISTINCT BSEG_BUKRS+BSEG_GJAHR+BSEG_BELNR FROM B06_01_IT_GIN_GL_SUMMARY
+--			WHERE BSEG_BUKRS+BSEG_GJAHR+BSEG_BELNR  IN 
+--						(
+--							SELECT DISTINCT BSEG_BUKRS+BSEG_GJAHR+BSEG_BELNR
+--							FROM B06_01_IT_GIN_GL_SUMMARY
+--							WHERE BSEG_HKONT LIKE  
+--								(
+--									SELECT REPLACE(GLOBALS_VALUE,'*','%')  FROM AM_GLOBALS
+--									WHERE GLOBALS_PARAMETER  = 'GL_ACCT_COST_CENTER'
+--								) 
+--							AND ZF_BSEG_SHKZG_DESC ='Credit'
+--						)
+--					AND BSEG_HKONT LIKE  
+--						(
+--								SELECT REPLACE(GLOBALS_VALUE,'*','%')  FROM AM_GLOBALS
+--								WHERE GLOBALS_PARAMETER  = 'GL_ACCT_COST_CENTER1'
+--						) AND ZF_BSEG_SHKZG_DESC ='Debit'
+--	 )
+--	END
+--ELSE
+--	BEGIN
+---- Group 3:
+---- *
+---- c* or d*
+---- This step handle : * debit and c* or d* credit.
+--	UPDATE B06_01_IT_GIN_GL_SUMMARY
+--	SET ZF_GL_DEBIT_GL1_CREDIT_GL3 = 'Yes'
+--	WHERE BSEG_BUKRS+BSEG_GJAHR+BSEG_BELNR IN 
+--	(
+--		SELECT DISTINCT BSEG_BUKRS+BSEG_GJAHR+BSEG_BELNR FROM B06_01_IT_GIN_GL_SUMMARY
+--			WHERE BSEG_BUKRS+BSEG_GJAHR+BSEG_BELNR  IN 
+--						(
+--							SELECT DISTINCT BSEG_BUKRS+BSEG_GJAHR+BSEG_BELNR
+--							FROM B06_01_IT_GIN_GL_SUMMARY
+--							WHERE BSEG_HKONT LIKE  
+--								(
+--									SELECT REPLACE(GLOBALS_VALUE,'*','%')  FROM AM_GLOBALS
+--									WHERE GLOBALS_PARAMETER  = 'GL_ACCT_COST_CENTER' 
+--								) 
+--							AND ZF_BSEG_SHKZG_DESC ='Debit'
+--						)
+--					AND 
+--					(
+--						(
+--							BSEG_HKONT LIKE  
+--							(
+--								SELECT REPLACE(dbo.TRIM(SUBSTRING ([GLOBALS_VALUE],0,CHARINDEX('or',[GLOBALS_VALUE]))) ,'*','%')   
+--								FROM [AM_GLOBALS] 
+--								WHERE [GLOBALS_PARAMETER] = 'GL_ACCT_COST_CENTER1'
+--							) AND ZF_BSEG_SHKZG_DESC ='Credit'
+--						)
+--						OR
+--						(
+--							BSEG_HKONT LIKE  
+--							(
+--								SELECT REPLACE(dbo.TRIM(SUBSTRING([GLOBALS_VALUE],CHARINDEX('or',([GLOBALS_VALUE]))+2,LEN([GLOBALS_VALUE]))) ,'*','%')  
+--								FROM [AM_GLOBALS] 
+--								WHERE [GLOBALS_PARAMETER] = 'GL_ACCT_COST_CENTER1'
+--							) AND ZF_BSEG_SHKZG_DESC ='Credit'
+--						)
+--					)
+--		)
+--		-- This step handle : * credit and c* or d* debit.
+--	UPDATE B06_01_IT_GIN_GL_SUMMARY
+--	SET ZF_GL_CREDIT_GL1_DEBIT_GL3 = 'Yes'
+--	WHERE BSEG_BUKRS+BSEG_GJAHR+BSEG_BELNR IN 
+--	(
+--		SELECT DISTINCT BSEG_BUKRS+BSEG_GJAHR+BSEG_BELNR FROM B06_01_IT_GIN_GL_SUMMARY
+--			WHERE BSEG_BUKRS+BSEG_GJAHR+BSEG_BELNR  IN 
+--						(
+--							SELECT DISTINCT BSEG_BUKRS+BSEG_GJAHR+BSEG_BELNR
+--							FROM B06_01_IT_GIN_GL_SUMMARY
+--							WHERE BSEG_HKONT LIKE  
+--								(
+--									SELECT REPLACE(GLOBALS_VALUE,'*','%')  FROM AM_GLOBALS
+--									WHERE GLOBALS_PARAMETER  = 'GL_ACCT_COST_CENTER' 
+--								) 
+--							AND ZF_BSEG_SHKZG_DESC ='Credit'
+--						)
+--					AND 
+--					(
+--						(
+--							BSEG_HKONT LIKE  
+--							(
+--								SELECT REPLACE(dbo.TRIM(SUBSTRING ([GLOBALS_VALUE],0,CHARINDEX('or',[GLOBALS_VALUE]))) ,'*','%')   
+--								FROM [AM_GLOBALS] 
+--								WHERE [GLOBALS_PARAMETER] = 'GL_ACCT_COST_CENTER1'
+--							) AND ZF_BSEG_SHKZG_DESC ='Debit'
+--						)
+--						OR
+--						(
+--							BSEG_HKONT LIKE  
+--							(
+--								SELECT REPLACE(dbo.TRIM(SUBSTRING([GLOBALS_VALUE],CHARINDEX('or',([GLOBALS_VALUE]))+2,LEN([GLOBALS_VALUE]))) ,'*','%')  
+--								FROM [AM_GLOBALS] 
+--								WHERE [GLOBALS_PARAMETER] = 'GL_ACCT_COST_CENTER1'
+--							) AND ZF_BSEG_SHKZG_DESC ='Debit'
+--						)
+--					)
+--	)
+--END
+
+EXEC SP_DROPTABLE 'B06_11_IT_FIN_GL'
+SELECT B04_11_IT_FIN_GL.*, ZF_HEADER_KEY B04_ZF_HEADER_KEY
+
+INTO B06_11_IT_FIN_GL
+ FROM B04_11_IT_FIN_GL
+LEFT JOIN B06_01_IT_GIN_GL_SUMMARY
+        ON ISNULL(B04_BSEG_BUKRS, '') = ISNULL(BSEG_BUKRS, '') AND 
+			ISNULL(B04_BSEG_GSBER, '') = ISNULL(BSEG_GSBER, '') AND 
+			ISNULL(B04_BSEG_BELNR, '') = ISNULL(BSEG_BELNR, '') AND 
+			ISNULL(B04_BSEG_GJAHR, '') = ISNULL(BSEG_GJAHR, '') AND 
+			ISNULL(B04_BSEG_LIFNR, '') = ISNULL(BSEG_LIFNR, '') AND 
+			ISNULL(B04_BSEG_KUNNR, '') = ISNULL(BSEG_KUNNR, '') AND 
+			ISNULL(B04_BSEG_KOKRS, '') = ISNULL(BSEG_KOKRS, '') AND 
+			ISNULL(B04_BSEG_PRCTR, '') = ISNULL(BSEG_PRCTR, '') AND 
+			ISNULL(B04_BSEG_KOSTL, '') = ISNULL(BSEG_KOSTL, '') AND 
+			ISNULL(B04_BSEG_UMSKZ, '') = ISNULL(BSEG_UMSKZ, '') AND 
+			ISNULL(B04_BKPF_MONAT, '') = ISNULL(BKPF_MONAT, '') AND 
+			ISNULL(B04_BKPF_BLDAT, '') = ISNULL(BKPF_BLDAT, '') AND 
+			ISNULL(B04_BKPF_BUDAT, '') = ISNULL(BKPF_BUDAT, '') AND 
+			ISNULL(B04_BSEG_KOART, '') = ISNULL(BSEG_KOART, '') AND 
+			ISNULL(B04_BSEG_SGTXT, '') = ISNULL(BSEG_SGTXT, '') AND 
+			ISNULL(B04_BSEG_AUGBL, '') = ISNULL(BSEG_AUGBL, '') AND 
+			ISNULL(B04_BSEG_AUGGJ, '') = ISNULL(BSEG_AUGGJ, '') AND 
+			ISNULL(B04_BKPF_AWTYP, '') = ISNULL(BKPF_AWTYP, '') AND 
+			ISNULL(B04_BKPF_XBLNR, '') = ISNULL(BKPF_XBLNR, '') AND 
+			ISNULL(B04_ZF_BKPF_GJAHR_MONAT, '') = ISNULL(ZF_BKPF_GJAHR_MONAT, '') AND 
+			ISNULL(B04_ZF_BKPF_BUDAT_FQ, '') = ISNULL(ZF_BKPF_BUDAT_FQ, '') AND 
+			ISNULL(B04_ZF_ENTRY_TYPE, '') = ISNULL(ZF_ENTRY_TYPE, '') AND 
+			ISNULL(B04_BSEG_HKONT, '') = ISNULL(BSEG_HKONT, '') AND 
+			ISNULL(B04_BKPF_BLART, '') = ISNULL(BKPF_BLART, '') AND 
+			ISNULL(B04_BKPF_USNAM, '') = ISNULL(BKPF_USNAM, '') AND 
+			ISNULL(B04_BSEG_BSCHL, '') = ISNULL(BSEG_BSCHL, '') AND 
+			ISNULL(B04_BKPF_HWAER, '') = ISNULL(BKPF_HWAER, '') AND 
+			ISNULL(B04_BKPF_WAERS, '') = ISNULL(BKPF_WAERS, '') AND 
+			ISNULL(B04_BKPF_BSTAT, '') = ISNULL(BKPF_BSTAT, '') AND
+			ISNULL(B04_BSEG_SHKZG, '') = ISNULL(BSEG_SHKZG, '') AND
+			ISNULL(B04_BKPF_CPUDT, '') = ISNULL(BKPF_CPUDT, '')
+
+
+
+/**/
+EXEC SP_DROPTABLE 'B06_02_IT_LFA1_DIFF_COUNTRY'
+SELECT A_LFA1.*,
+CAST('' AS nvarchar(12)) as ZF_LFA1_LIFNR_DIFF_COUNTRY
+
+INTO B06_02_IT_LFA1_DIFF_COUNTRY
+FROM A_LFA1
+
+/* List of supplier from LFA1 with LFA1_LAND1 can't find in T001_LAND1 */
+UPDATE B06_02_IT_LFA1_DIFF_COUNTRY
+SET ZF_LFA1_LIFNR_DIFF_COUNTRY = LFA1_LIFNR
+FROM B06_02_IT_LFA1_DIFF_COUNTRY AS A 
+WHERE LFA1_LAND1
+NOT IN 
+(
+	SELECT DISTINCT T001_LAND1 FROM A_T001
+)
+
+/*Rename fields for Qlik*/
+EXEC sp_RENAME_FIELD 'B06_', 'B06_01_IT_GIN_GL_SUMMARY'
+/* log cube creation*/
+
+
+
+INSERT INTO [dbo].[_DatabaseLogTable] ([Database],[Object],[Object Type],[User],[Date],[Time],[Description],[Table],[Rows])
+SELECT DB_NAME(),OBJECT_NAME(@@PROCID),'P',SYSTEM_USER,CONVERT(date,GETDATE()),CONVERT(time,GETDATE()),'Cube completed','[B06_01_IT_GIN_GL_SUMMARY]',(SELECT COUNT(*) FROM [B06_01_IT_GIN_GL_SUMMARY]) 
+        
+
+/* log end of procedure*/
+
+
+INSERT INTO [dbo].[_DatabaseLogTable] ([Database],[Object],[Object Type],[User],[Date],[Time],[Description],[Table],[Rows])
+SELECT DB_NAME(),OBJECT_NAME(@@PROCID),'P',SYSTEM_USER,CONVERT(date,GETDATE()),CONVERT(time,GETDATE()),'Procedure finished',NULL,NULL
+GO

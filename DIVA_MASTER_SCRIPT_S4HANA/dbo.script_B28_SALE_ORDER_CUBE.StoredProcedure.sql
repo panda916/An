@@ -1,0 +1,305 @@
+USE [DIVA_MASTER_SCRIPT_S4HANA]
+GO
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+CREATE   PROCEDURE [dbo].[script_B28_SALE_ORDER_CUBE]
+AS
+
+
+--DYNAMIC_SCRIPT_START
+/*  Change history comments
+	Update history 
+	-------------------------------------------------------
+	Date            | Who   |  Description 
+	24-03-2022	| Thuan	| Remove MANDT field in join
+*/
+
+   DECLARE   
+       @CURRENCY NVARCHAR(MAX)      = (SELECT GLOBALS_VALUE FROM [AM_GLOBALS] WHERE GLOBALS_PARAMETER = 'currency')
+      ,@DATE1 NVARCHAR(MAX)       = (SELECT GLOBALS_VALUE FROM [AM_GLOBALS] WHERE GLOBALS_PARAMETER = 'date1')
+      ,@DATE2 NVARCHAR(MAX)       = (SELECT GLOBALS_VALUE FROM [AM_GLOBALS] WHERE GLOBALS_PARAMETER = 'date2')
+      ,@DOWNLOADDATE NVARCHAR(MAX)    = (SELECT GLOBALS_VALUE FROM [AM_GLOBALS] WHERE GLOBALS_PARAMETER = 'downloaddate')
+      ,@DATEFORMAT VARCHAR(3)             = (SELECT GLOBALS_VALUE FROM [AM_GLOBALS] WHERE GLOBALS_PARAMETER = 'dateformat')
+      ,@EXCHANGERATETYPE NVARCHAR(MAX)  = (SELECT GLOBALS_VALUE FROM [AM_GLOBALS] WHERE GLOBALS_PARAMETER = 'exchangeratetype')
+      ,@LANGUAGE1 NVARCHAR(MAX)     = (SELECT GLOBALS_VALUE FROM [AM_GLOBALS] WHERE GLOBALS_PARAMETER = 'language1')
+      ,@LANGUAGE2 NVARCHAR(MAX)     = (SELECT GLOBALS_VALUE FROM [AM_GLOBALS] WHERE GLOBALS_PARAMETER = 'language2')
+      ,@YEAR NVARCHAR(MAX)        = (SELECT GLOBALS_VALUE FROM [AM_GLOBALS] WHERE GLOBALS_PARAMETER = 'year')
+      ,@ID NVARCHAR(MAX)          = (SELECT GLOBALS_VALUE FROM [AM_GLOBALS] WHERE GLOBALS_PARAMETER = 'id')
+      ,@LIMIT_RECORDS INT               = CAST((SELECT GLOBALS_VALUE FROM [AM_GLOBALS] WHERE GLOBALS_PARAMETER = 'LIMIT_RECORDS') AS INT)
+      ,@ZV_LFA1_KTOKK_PERS INT                = (SELECT GLOBALS_VALUE FROM [AM_GLOBALS] WHERE GLOBALS_PARAMETER = 'ZV_LFA1_KTOKK_PERS')
+	  ,@ZV_KNA1_KTOKD_PERS INT                = (SELECT GLOBALS_VALUE FROM [AM_GLOBALS] WHERE GLOBALS_PARAMETER = 'ZV_KNA1_KTOKD_PERS')
+
+
+/*
+		Step 1: The VBAK and VBAP table contain all the information of Inqiry, Quotation, Sale order and so on, So we need to generate a cube to contain all of that information to reuse later.
+	*/
+	EXEC SP_REMOVE_TABLES 'B28_01_IT_SALE_DOCUMENTS'
+	SELECT VBAK_MANDT, -- Client
+		   VBAK_VBELN, -- Sale document nr
+		   VBAP_POSNR, -- Sale document item nr
+		   VBAK_AUART, -- Sale document type
+		   TVAKT_BEZEI, -- Sale document type desc
+		   VBAK_VBTYP, -- Sale document category
+		   B00_DD07T_VBTYP.DD07T_DDTEXT ZF_VBTYP_DDTEXT, --Sale document category desc
+		   VBAK_KUNNR, -- Customer (Sold-to-party)
+		   VBAK_ERNAM, -- The user which was created header sale document
+		   VBAK_ERDAT, -- The date on which was created header sale document
+		   VBAP_ERNAM, -- The user which was created detail line sale document
+		   VBAP_ERDAT, -- The date on which was created detail item sale document
+		   VBAK_AUDAT, -- Sale document date
+		   VBAK_VKORG, -- Organization
+		   TVKOT_VTEXT, -- Sale organization desc,
+		   TVKO_BUKRS,
+		   TVKO_BUKRS_MAPPING,
+		   VBAK_VTWEG, -- Sale distributon
+		   TVTWT_VTEXT, -- Sale distribution desc
+		   VBAK_VKGRP, -- Sale group
+		   TVGRT_BEZEI, -- Sale group desc
+		   VBAK_SPART, -- Divison
+		   TSPAT_VTEXT, -- Divison desc
+		   VBAK_VKBUR, -- Sale office
+		   TVKBT_BEZEI, --Sale office desc
+		   VBAK_AUGRU, -- Order reason
+		   TVAUT_BEZEI, -- Order reason desc
+		   VBAK_KALSM, -- Price procedure
+		VBAP_ERZET,
+		   VBAK_WAERK, -- Header document cc
+		   VBAP_WAERK, -- Item document cc
+		  @CURRENCY AS ZF_CUSTOM_CURRENCY,
+		   VBAP_MATNR, -- Material nr
+		   VBAP_ARKTX, -- Material desc
+		   VBAP_KWMENG, -- Order quantity
+		   VBAP_VRKME, -- Sale unit
+		   T006A_MSEHT, -- Sale unt desc
+		   VBAP_PSTYV, -- Item category
+		   TVAPT_VTEXT, -- Item category desc
+		   VBAP_NETPR, -- Net price per an item
+		   VBAP_NETWR, -- Net value
+		   VBAK_VGBEL, -- Preceding document (header)
+		   VBAK_VGTYP, -- Preceding document type (header)
+		   B00_DD07T_VBAK_VBTYP_REF.DD07T_DDTEXT ZF_VBAK_VGTYP_DDTEXT,
+		   VBAP_VGBEL, -- Preceding document (item)
+		   VBAP_VGPOS, -- Preceding line nr
+		   VBAP_VGTYP, -- Preceding document type (item)
+		   B00_DD07T_VBAP_VBTYP_REF.DD07T_DDTEXT ZF_VBAP_VGTYP_DDTEXT,
+		   CASE WHEN B00_DD07T_VBAK_VBTYP_REF.DD07T_DDTEXT IS NOT NULL THEN B00_DD07T_VBAK_VBTYP_REF.DD07T_DDTEXT
+				WHEN VBAK_VBTYP='A' AND  B00_DD07T_VBAK_VBTYP_REF.DD07T_DDTEXT IS NULL THEN 'Inquiry'
+				WHEN VBAK_VBTYP='B' AND  B00_DD07T_VBAK_VBTYP_REF.DD07T_DDTEXT IS NULL THEN 'Quotation'
+				WHEN VBAK_VBTYP='C' AND  B00_DD07T_VBAK_VBTYP_REF.DD07T_DDTEXT IS NULL THEN 'Sales order'
+				WHEN VBAK_VBTYP='D' AND  B00_DD07T_VBAK_VBTYP_REF.DD07T_DDTEXT IS NULL THEN 'Item proposal'
+				WHEN VBAK_VBTYP='E' AND  B00_DD07T_VBAK_VBTYP_REF.DD07T_DDTEXT IS NULL THEN 'Scheduling agreement'
+				WHEN VBAK_VBTYP='F' AND  B00_DD07T_VBAK_VBTYP_REF.DD07T_DDTEXT IS NULL THEN 'Scheduling agreement with external service agent'
+				WHEN VBAK_VBTYP='G' AND  B00_DD07T_VBAK_VBTYP_REF.DD07T_DDTEXT IS NULL THEN 'Contract'
+				WHEN VBAK_VBTYP='H' AND  B00_DD07T_VBAK_VBTYP_REF.DD07T_DDTEXT IS NULL THEN 'Returns'
+				WHEN VBAK_VBTYP='I' AND  B00_DD07T_VBAK_VBTYP_REF.DD07T_DDTEXT IS NULL THEN 'Order w/o charge'
+				WHEN VBAK_VBTYP='J' AND  B00_DD07T_VBAK_VBTYP_REF.DD07T_DDTEXT IS NULL THEN 'Delivery'
+				WHEN VBAK_VBTYP='K' AND  B00_DD07T_VBAK_VBTYP_REF.DD07T_DDTEXT IS NULL THEN 'Credit memo request' 
+				WHEN VBAK_VBTYP='L' AND  B00_DD07T_VBAK_VBTYP_REF.DD07T_DDTEXT IS NULL THEN 'Debit memo request'
+				ELSE  'Sales order'  END AS ZF_DD07T_DDTEXT_VBTYP,
+		   B00_USR_INFO_HEADER.V_USERNAME_NAME_TEXT ZF_VBAK_ERNAM_TEXT,
+		   B00_USR_INFO_ITEM.V_USERNAME_NAME_TEXT ZF_VBAP_ERNAM_TEXT,
+		   B00_USR_INFO_KNA1.V_USERNAME_NAME_TEXT ZF_KNA1_ERNAM_TEXT,
+		   KNA1_MANDT,
+		   KNA1_ERDAT,
+		   KNA1_KUNNR,
+		   KNA1_NAME1,
+		   KNA1_STRAS,
+		   KNA1_LAND1,
+		   KNA1_PSTLZ,
+		   KNA1_ORT01,
+		   KNA1_ERNAM,
+		   VBAP_NETPR * ISNULL(CURRENCY_FACTOR_ITEM.TCURX_FACTOR,1) ZF_VBAP_NETPR_S,		   
+		   VBAP_NETPR * ISNULL(CURRENCY_FACTOR_ITEM.TCURX_FACTOR,1)*  COALESCE(CAST(TCURR_CUC.TCURR_UKURS AS FLOAT),1) * COALESCE(TCURF_CUC.TCURF_TFACT,1) / COALESCE(TCURF_CUC.TCURF_FFACT,1) AS  ZF_VBAP_NETPR_S_CUC,
+		   
+		   VBAP_NETWR * ISNULL(CURRENCY_FACTOR_ITEM.TCURX_FACTOR,1) AS  ZF_VBAP_NETWR_S,
+		   VBAP_NETWR * ISNULL(CURRENCY_FACTOR_ITEM.TCURX_FACTOR,1)* COALESCE(CAST(TCURR_COC.TCURR_UKURS AS FLOAT),1) * COALESCE(TCURF_COC.TCURF_TFACT,1) / COALESCE(TCURF_COC.TCURF_FFACT,1) AS  ZF_VBAP_NETWR_S_COC,
+		   VBAP_NETWR * ISNULL(CURRENCY_FACTOR_ITEM.TCURX_FACTOR,1)* COALESCE(CAST(TCURR_CUC.TCURR_UKURS AS FLOAT),1) * COALESCE(TCURF_CUC.TCURF_TFACT,1) / COALESCE(TCURF_CUC.TCURF_FFACT,1) AS  ZF_VBAP_NETWR_S_CUC,
+		  		  
+		   VBAP_NETPR * ISNULL(CURRENCY_FACTOR_ITEM.TCURX_FACTOR,1) * COALESCE(CAST(TCURR_COC.TCURR_UKURS AS FLOAT),1) * COALESCE(TCURF_COC.TCURF_TFACT,1) / COALESCE(TCURF_COC.TCURF_FFACT,1) ZF_VBAP_NETPR_S_COC,
+		   VBAP_NETPR * ISNULL(CURRENCY_FACTOR_ITEM.TCURX_FACTOR,1)*  COALESCE(CAST(TCURR_CUC.TCURR_UKURS AS FLOAT),1) * COALESCE(TCURF_CUC.TCURF_TFACT,1) / COALESCE(TCURF_CUC.TCURF_FFACT,1) AS ZF_VBAP_NETPR_COC_S_CUC,
+
+     	  T001_WAERS,
+		   CONCAT(VBAK_MANDT,'|',VBAK_VBELN,'|',CAST(VBAP_POSNR AS INT)) AS ZF_SALE_ORDER_KEY,
+		   	-- HL: Add fields from SAP Usage
+		   VBAK_BUKRS_VF,  -- Company code to be billed	
+		   AM_SCOPE.SCOPE_BUSINESS_DMN_L1,
+		   AM_SCOPE.SCOPE_BUSINESS_DMN_L2,
+		   VBAK_VBKLT,
+		   VBAP_ZMENG,
+		   VBAK_AEDAT,
+		   VBAP_WERKS,
+		   T001W_NAME1,
+		   VBAP_VBELN,
+		   T001_BUTXT
+		   --,A_TVPT.TVPT_Description,
+	INTO B28_01_IT_SALE_DOCUMENTS
+	FROM A_VBAK 
+	INNER JOIN A_VBAP
+	ON  VBAK_VBELN = VBAP_VBELN
+
+	--Only keep all sale organization relate to company code in the BKPF/BSEG cube
+	--Khoi removed the filter relate to Sale organization for the moment
+	INNER JOIN B00_TVKO
+	ON VBAK_VKORG = TVKO_VKORG
+
+	--LEFT JOIN B00_TVKO
+	--ON VBAK_VKORG = TVKO_VKORG
+
+	-- HL: Added from SAP Usage - Add information from the scope table concerning the business domain   
+	INNER JOIN AM_SCOPE                                         
+		ON VBAK_BUKRS_VF = AM_SCOPE.SCOPE_CMPNY_CODE
+
+	--LEFT JOIN A_TVPT
+	--ON VBAP_PSTYV = A_TVPT.TVPT_PSTYV
+	--Get Company currency
+	LEFT JOIN B00_03_IT_T001_RMV_DUP
+	ON TVKO_BUKRS_MAPPING = BUKRS_MAPPING
+
+	--Get amount factor for header amount in Company currency
+	LEFT JOIN B00_TCURX B00_TCURX_COC
+	ON B00_TCURX_COC.TCURX_CURRKEY=T001_WAERS
+
+	--Get customer info
+	LEFT JOIN A_KNA1
+	ON  KNA1_KUNNR = VBAK_KUNNR
+
+	--Get amount factor for header amount in document document
+	LEFT JOIN B00_TCURX CURRENCY_FACTOR_HEADER
+	ON CURRENCY_FACTOR_HEADER.TCURX_CURRKEY = VBAK_WAERK COLLATE SQL_Latin1_General_CP1_CS_AS
+
+	--Get amount factor for item amount in document document
+	LEFT JOIN B00_TCURX CURRENCY_FACTOR_ITEM
+	ON CURRENCY_FACTOR_ITEM.TCURX_CURRKEY = VBAP_WAERK COLLATE SQL_Latin1_General_CP1_CS_AS
+
+	--Get user info created header sale document
+	LEFT JOIN A_V_USERNAME B00_USR_INFO_HEADER
+	ON  B00_USR_INFO_HEADER.V_USERNAME_BNAME = VBAK_ERNAM
+
+	--Get user created item sale document
+	LEFT JOIN A_V_USERNAME B00_USR_INFO_ITEM
+	ON  B00_USR_INFO_ITEM.V_USERNAME_BNAME = VBAP_ERNAM
+
+	--Get user created customer
+	LEFT JOIN A_V_USERNAME B00_USR_INFO_KNA1
+	ON B00_USR_INFO_KNA1.V_USERNAME_BNAME = KNA1_ERNAM
+	
+	--Get sale document type
+	LEFT JOIN A_TVAKT
+	ON  TVAKT_SPRAS IN ('E', 'EN')
+	AND TVAKT_AUART = VBAK_AUART COLLATE SQL_Latin1_General_CP1_CS_AS
+	
+	--Add reference document category (header)
+	LEFT JOIN B00_DD07T_VBTYP B00_DD07T_VBAK_VBTYP_REF
+	ON B00_DD07T_VBAK_VBTYP_REF.DD07T_DOMVALUE_L = VBAK_VBTYP COLLATE SQL_Latin1_General_CP1_CS_AS --The current collation is not case sensitive so we need this statement to make the WHERE condition case sensitive
+
+	--Add reference document category (detail item)
+	LEFT JOIN B00_DD07T_VBTYP B00_DD07T_VBAP_VBTYP_REF
+	ON B00_DD07T_VBAP_VBTYP_REF.DD07T_DOMVALUE_L = VBAP_VGTYP COLLATE SQL_Latin1_General_CP1_CS_AS --The current collation is not case sensitive so we need this statement to make the WHERE condition case sensitive
+
+	--Add document category
+	LEFT JOIN B00_DD07T_VBTYP
+	ON B00_DD07T_VBTYP.DD07T_DOMVALUE_L = VBAK_VBTYP COLLATE SQL_Latin1_General_CP1_CS_AS --The current collation is not case sensitive so we need this statement to make the WHERE condition case sensitive
+
+	--Add sale organization desc
+	LEFT JOIN A_TVKOT
+	ON  TVKOT_SPRAS IN ('E','EN')
+	AND VBAK_VKORG = TVKOT_VKORG
+
+	--Add sale distribution channel desc
+	LEFT JOIN A_TVTWT
+	ON  TVTWT_SPRAS IN ('E', 'EN')
+	AND VBAK_VTWEG = TVTWT_VTWEG COLLATE SQL_Latin1_General_CP1_CS_AS
+
+	--Add sale divison channel desc
+	LEFT JOIN A_TSPAT
+	ON  TSPAT_SPRAS IN ('E', 'EN')
+	AND VBAK_SPART = TSPAT_SPART COLLATE SQL_Latin1_General_CP1_CS_AS
+
+	--Add sale group desc
+	LEFT JOIN A_TVGRT
+	ON  TVGRT_SPRAS IN ('EN', 'E')
+	AND TVGRT_VKGRP = VBAK_VKGRP COLLATE SQL_Latin1_General_CP1_CS_AS
+
+	--Add sale office desc
+	LEFT JOIN A_TVKBT
+	ON  TVKBT_SPRAS IN ('E', 'EN')
+	AND VBAK_VKBUR = TVKBT_VKBUR COLLATE SQL_Latin1_General_CP1_CS_AS
+
+	--Add order reason
+	LEFT JOIN A_TVAUT
+	ON  TVAUT_SPRAS IN ('E', 'EN')
+	AND TVAUT_AUGRU = VBAK_AUGRU COLLATE SQL_Latin1_General_CP1_CS_AS
+
+	--Add sale item category desc
+	LEFT JOIN A_T006A
+	ON  T006A_SPRAS IN ('E', 'EN')
+	AND VBAP_VRKME = T006A_MSEHI COLLATE SQL_Latin1_General_CP1_CS_AS
+
+	--Add sale unit price desc
+	LEFT JOIN A_TVAPT
+	ON  TVAPT_SPRAS IN ('E', 'EN')
+	AND TVAPT_PSTYV = VBAP_PSTYV COLLATE SQL_Latin1_General_CP1_CS_AS
+
+-- Convert document currency to USD.
+
+-- Add currency factor from document to USD
+
+	LEFT JOIN B00_IT_TCURF TCURF_CUC
+	ON VBAP_WAERK = TCURF_CUC.TCURF_FCURR
+	AND TCURF_CUC.TCURF_TCURR  = @currency  
+	AND TCURF_CUC.TCURF_GDATU = (
+		SELECT TOP 1 B00_IT_TCURF.TCURF_GDATU
+		FROM B00_IT_TCURF
+		WHERE VBAP_WAERK = B00_IT_TCURF.TCURF_FCURR AND 
+				B00_IT_TCURF.TCURF_TCURR  = @currency  AND
+				B00_IT_TCURF.TCURF_GDATU <= VBAP_ERDAT
+		ORDER BY B00_IT_TCURF.TCURF_GDATU DESC
+		)
+-- Add exchange rate from document currency to USD
+	LEFT JOIN B00_IT_TCURR TCURR_CUC
+		ON VBAP_WAERK = TCURR_CUC.TCURR_FCURR
+		AND TCURR_CUC.TCURR_TCURR  = @currency  
+		AND TCURR_CUC.TCURR_GDATU = (
+			SELECT TOP 1 B00_IT_TCURR.TCURR_GDATU
+			FROM B00_IT_TCURR
+			WHERE VBAP_WAERK = B00_IT_TCURR.TCURR_FCURR AND 
+					B00_IT_TCURR.TCURR_TCURR  = @currency  AND
+					B00_IT_TCURR.TCURR_GDATU <= VBAP_ERDAT
+			ORDER BY B00_IT_TCURR.TCURR_GDATU DESC
+			 )
+
+-- ) document currency to local currency.
+-- Add currency factor from document currency to local currency
+
+	LEFT JOIN B00_IT_TCURF TCURF_COC
+	ON VBAP_WAERK = TCURF_COC.TCURF_FCURR
+	AND TCURF_COC.TCURF_TCURR  = T001_WAERS  
+	AND TCURF_COC.TCURF_GDATU = (
+		SELECT TOP 1 B00_IT_TCURF.TCURF_GDATU
+		FROM B00_IT_TCURF
+		WHERE VBAP_WAERK = B00_IT_TCURF.TCURF_FCURR AND 
+				B00_IT_TCURF.TCURF_TCURR  = T001_WAERS  AND
+				B00_IT_TCURF.TCURF_GDATU <= VBAP_ERDAT
+		ORDER BY B00_IT_TCURF.TCURF_GDATU DESC
+		)
+
+-- Add exchange rate from document currency to USD
+	LEFT JOIN B00_IT_TCURR TCURR_COC
+		ON VBAP_WAERK = TCURR_COC.TCURR_FCURR
+		AND TCURR_COC.TCURR_TCURR  = T001_WAERS  
+		AND TCURR_COC.TCURR_GDATU = (
+			SELECT TOP 1 B00_IT_TCURR.TCURR_GDATU
+			FROM B00_IT_TCURR
+			WHERE VBAP_WAERK = B00_IT_TCURR.TCURR_FCURR AND 
+					B00_IT_TCURR.TCURR_TCURR  = T001_WAERS  AND
+					B00_IT_TCURR.TCURR_GDATU <= VBAP_ERDAT
+			ORDER BY B00_IT_TCURR.TCURR_GDATU DESC
+
+		)
+	--HL: Added from SU: Add descriptions of plant codes
+	LEFT JOIN A_T001W
+		ON A_VBAP.VBAP_WERKS = A_T001W.T001W_WERKS  
+EXEC SP_RENAME_FIELD 'B28_',B28_01_IT_SALE_DOCUMENTS
+GO

@@ -1,0 +1,331 @@
+USE [DIVA_SOLA_FY20Q4_INCREMENTAL]
+GO
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+-- =============================================
+-- Author:		Vinh Le
+-- Create date: 07/05/2020
+-- Description:	We will look up the sale documents which may be a cheat document in this script
+					
+-- =============================================
+CREATE PROCEDURE [dbo].[B21_OTC_SOD_TESTING]
+AS
+BEGIN
+
+	--SET ROWCOUNT 1000
+
+	/*
+		Step 1: Flag the documents which the users created custome and sale order are the same.
+	*/
+		UPDATE B20_20_CENTER_FACT_TABLE
+		SET B20_21_ZF_CUSTOMER_AND_ORDER_RISK_FLAG = 'Yes',
+			B20_21_ZF_KNA1_ERNAM_SAME_VBAK_VBAP_ERNAM_FLAG = 'Yes',
+            B20_21_ZF_CUSTOMER_AND_ORDER_RISK_USER = B20_20_KNA1_ERNAM
+		WHERE (
+            B20_20_KNA1_ERNAM = B20_20_VBAK_ERNAM
+            OR
+            B20_20_KNA1_ERNAM = B20_20_VBAP_ERNAM   
+        ) AND B20_20_KNA1_ERNAM <> ''
+
+	/*
+		Step 2.1: Flag the documents which the user create customer, sale order header/item and delivery header/item documents is the same.
+	*/
+	UPDATE B20_20_CENTER_FACT_TABLE
+		SET B20_21_ZF_CUSTOMER_ORDER_AND_DELIVERY_RISK_FLAG = 'Yes',
+			B20_21_ZF_KNA1_ERNAM_SAME_VBAK_VBAP_ERNAM_SAME_LIKP_LIPS_ERNAM_FLAG = 'Yes',
+            B20_21_ZF_CUSTOMER_ORDER_AND_DELIVERY_RISK_USER = B20_20_KNA1_ERNAM
+		WHERE B20_21_ZF_CUSTOMER_AND_ORDER_RISK_FLAG = 'Yes' AND 
+            (
+                B20_20_LIKP_ERNAM = B20_20_KNA1_ERNAM OR
+                B20_20_LIPS_ERNAM = B20_20_KNA1_ERNAM
+            ) AND B20_20_KNA1_ERNAM <> ''
+
+    /*
+		Step 2.2: Flag the documents which the user create sale order header/item and delivery header/item documents is the same.
+	*/
+        -- User sale order header same delivery header
+        UPDATE B20_20_CENTER_FACT_TABLE
+		SET B20_21_ZF_CUSTOMER_ORDER_AND_DELIVERY_RISK_FLAG = 'Yes',
+			B20_21_ZF_VBAK_VBAP_ERNAM_SAME_LIKP_LIPS_ERNAM_FLAG = 'Yes',
+            B20_21_ZF_ORDER_AND_DELIVERY_RISK_USER = B20_20_VBAK_ERNAM
+		WHERE B20_20_VBAK_ERNAM = B20_20_LIKP_ERNAM AND B20_20_VBAK_ERNAM <> ''
+
+        -- User sale order header same delivery item
+        UPDATE B20_20_CENTER_FACT_TABLE
+		SET B20_21_ZF_CUSTOMER_ORDER_AND_DELIVERY_RISK_FLAG = 'Yes',
+			B20_21_ZF_VBAK_VBAP_ERNAM_SAME_LIKP_LIPS_ERNAM_FLAG = 'Yes',
+            B20_21_ZF_ORDER_AND_DELIVERY_RISK_USER = B20_20_VBAK_ERNAM
+		WHERE B20_20_VBAK_ERNAM = B20_20_LIPS_ERNAM AND B20_20_VBAK_ERNAM <> ''
+
+        -- User sale order item same delivery header
+        UPDATE B20_20_CENTER_FACT_TABLE
+		SET B20_21_ZF_CUSTOMER_ORDER_AND_DELIVERY_RISK_FLAG = 'Yes',
+			B20_21_ZF_VBAK_VBAP_ERNAM_SAME_LIKP_LIPS_ERNAM_FLAG = 'Yes',
+            B20_21_ZF_ORDER_AND_DELIVERY_RISK_USER = B20_20_VBAP_ERNAM
+		WHERE B20_20_VBAP_ERNAM = B20_20_LIKP_ERNAM AND B20_20_VBAP_ERNAM <> ''
+
+        -- User sale order item same delivery item
+        UPDATE B20_20_CENTER_FACT_TABLE
+		SET B20_21_ZF_CUSTOMER_ORDER_AND_DELIVERY_RISK_FLAG = 'Yes',
+			B20_21_ZF_VBAK_VBAP_ERNAM_SAME_LIKP_LIPS_ERNAM_FLAG = 'Yes',
+            B20_21_ZF_ORDER_AND_DELIVERY_RISK_USER = B20_20_VBAP_ERNAM
+		WHERE B20_20_VBAP_ERNAM = B20_20_LIPS_ERNAM AND B20_20_VBAP_ERNAM <> ''
+
+    /*
+        Step 3.1: Flag the documents which the user created customer, sale document header/item, delivery document header/item, material document is the same.
+    */
+        UPDATE B20_20_CENTER_FACT_TABLE
+		SET B20_22_ZF_CUSTOMER_ORDER_DELIVERY_AND_MATERIAL_RISK_FLAG = 'Yes',
+			B20_22_ZF_KNA1_ERNAM_SAME_VBAK_VBAP_ERNAM_SAME_LIKP_LIPS_SAME_MKPF_USNAM_FLAG = 'Yes',
+            B20_22_ZF_CUSTOMER_ORDER_DELIVERY_AND_MATERIAL_RISK_USER = B20_20_KNA1_ERNAM
+		WHERE B20_21_ZF_KNA1_ERNAM_SAME_VBAK_VBAP_ERNAM_SAME_LIKP_LIPS_ERNAM_FLAG = 'Yes' AND B20_20_MKPF_USNAM = B20_20_KNA1_ERNAM AND B20_20_KNA1_ERNAM <> ''
+
+    /*
+        Step 3.2: Flag the documents which the user create customer, sale order header/item and material document is the same
+    */
+        UPDATE B20_20_CENTER_FACT_TABLE
+		SET B20_22_ZF_CUSTOMER_ORDER_DELIVERY_AND_MATERIAL_RISK_FLAG = 'Yes',
+			B20_22_ZF_KNA1_ERNAM_SAME_VBAK_VBAP_ERNAM_SAME_MKPF_USNAM_FLAG = 'Yes',
+            B20_22_ZF_CUSTOMER_ORDER_AND_MATERIAL_RISK_USER = B20_20_KNA1_ERNAM
+		WHERE B20_21_ZF_KNA1_ERNAM_SAME_VBAK_VBAP_ERNAM_FLAG = 'Yes' AND B20_20_MKPF_USNAM = B20_20_KNA1_ERNAM AND B20_20_MKPF_USNAM <> ''
+
+    /*
+        Step 3.3: Flag the documents which the user created sale order header/item, delivery and material document is the same
+    */
+        UPDATE B20_20_CENTER_FACT_TABLE
+		SET B20_22_ZF_CUSTOMER_ORDER_DELIVERY_AND_MATERIAL_RISK_FLAG = 'Yes',
+			B20_22_ZF_VBAK_VBAP_ERNAM_SAME_LIKP_LIPS_SAME_MKPF_USNAM_FLAG = 'Yes',
+            B20_22_ZF_ORDER_DELIVERY_AND_MATERIAL_RISK_USER = B20_20_KNA1_ERNAM
+		WHERE B20_21_ZF_VBAK_VBAP_ERNAM_SAME_LIKP_LIPS_ERNAM_FLAG = 'Yes' AND B20_20_MKPF_USNAM = B20_21_ZF_ORDER_AND_DELIVERY_RISK_USER AND B20_20_MKPF_USNAM <> ''
+
+	/*
+        Step 3.4: Flag the documents which the user created sale order header/item, delivery and material document is the same
+    */
+		UPDATE B20_20_CENTER_FACT_TABLE
+		SET B20_22_ZF_CUSTOMER_ORDER_DELIVERY_AND_MATERIAL_RISK_FLAG = 'Yes',
+			B20_22_ZF_VBAK_VBAP_ERNAM_SAME_MKPF_USNAM_FLAG = 'Yes',
+            B20_22_ZF_ORDER_AND_MATERIAL_RISK_USER = B20_20_MKPF_USNAM
+		WHERE (
+                B20_20_VBAK_ERNAM = B20_20_MKPF_USNAM OR
+                B20_20_VBAP_ERNAM = B20_20_MKPF_USNAM
+			   ) AND B20_20_MKPF_USNAM <> ''
+
+    /*
+        Step 4.1: Flag the documents which the user create customer, sale order header/item, material document and invoice header/itm is the same
+    */
+        UPDATE B20_20_CENTER_FACT_TABLE
+		SET B20_23_ZF_CUSTOMER_ORDER_DELIVERY_MATERIAL_AND_INVOICE_RISK_FLAG = 'Yes',
+			B20_23_ZF_KNA1_ERNAM_SAME_VBAK_VBAP_ERNAM_SAME_MKPF_USNAM_SAME_VBRK_VBRP_ERNAM_FLAG = 'Yes',
+            B20_23_ZF_CUSTOMER_ORDER_MATERIAL_AND_INVOICE_RISK_USER = B20_20_KNA1_ERNAM
+		WHERE B20_21_ZF_KNA1_ERNAM_SAME_VBAK_VBAP_ERNAM_SAME_LIKP_LIPS_ERNAM_FLAG = 'Yes' AND (
+            B20_20_VBRK_ERNAM = B20_20_KNA1_ERNAM OR
+            B20_20_VBRP_ERNAM = B20_20_KNA1_ERNAM
+        ) AND B20_20_KNA1_ERNAM <> ''
+    
+    /*
+        Step 4.2: Flag the documents which the user create sale order header/item, material document and invoice header/itm is the same
+    */  
+        UPDATE B20_20_CENTER_FACT_TABLE
+		SET B20_23_ZF_CUSTOMER_ORDER_DELIVERY_MATERIAL_AND_INVOICE_RISK_FLAG = 'Yes',
+			B20_23_ZF_VBAK_VBAP_ERNAM_SAME_MKPF_USNAM_SAME_VBRK_VBRP_ERNAM_FLAG = 'Yes',
+            B20_23_ZF_ORDER_MATERIAL_AND_INVOICE_RISK_USER = B20_20_MKPF_USNAM
+		WHERE (
+            B20_20_VBAK_ERNAM = B20_20_MKPF_USNAM OR
+            B20_20_VBAP_ERNAM = B20_20_MKPF_USNAM
+        ) AND (
+            B20_20_VBRK_ERNAM = B20_20_MKPF_USNAM OR
+            B20_20_VBRP_ERNAM = B20_20_MKPF_USNAM
+        ) AND B20_20_MKPF_USNAM <> ''
+
+    /*
+        Step 4.3: Flag the documents which the user create sale order header/item, delivery, material document and invoice header/itm is the same
+    */ 
+        UPDATE B20_20_CENTER_FACT_TABLE
+		SET B20_23_ZF_CUSTOMER_ORDER_DELIVERY_MATERIAL_AND_INVOICE_RISK_FLAG = 'Yes',
+			B20_23_ZF_VBAK_VBAP_ERNAM_SAME_LIKP_LIPS_ERNAM_SAME_MKPF_USNAM_SAME_VBRK_VBRP_ERNAM_FLAG = 'Yes',
+            B20_23_ZF_ORDER_DELIVERY_MATERIAL_AND_INVOICE_RISK_USER = B20_20_MKPF_USNAM
+		WHERE (
+            B20_20_VBAK_ERNAM = B20_20_MKPF_USNAM OR
+            B20_20_VBAP_ERNAM = B20_20_MKPF_USNAM
+        )AND (
+            B20_20_LIKP_ERNAM = B20_20_MKPF_USNAM OR
+            B20_20_LIPS_ERNAM = B20_20_MKPF_USNAM
+        ) AND (
+            B20_20_VBRK_ERNAM = B20_20_MKPF_USNAM OR
+            B20_20_VBRP_ERNAM = B20_20_MKPF_USNAM
+        ) AND B20_20_MKPF_USNAM <> ''
+
+    /*
+        Step 4.4: Flag the documents which the user create customer, sale order header/item, delivery, material document and invoice header/itm is the same
+    */ 
+        UPDATE B20_20_CENTER_FACT_TABLE
+		SET B20_23_ZF_CUSTOMER_ORDER_DELIVERY_MATERIAL_AND_INVOICE_RISK_FLAG = 'Yes',
+			B20_23_ZF_KNA1_ERNAM_SAME_VBAK_VBAP_ERNAM_SAME_LIKP_LIPS_ERNAM_SAME_MKPF_USNAM_SAME_VBRK_VBRP_ERNAM_FLAG = 'Yes',
+            B20_23_ZF_CUSTOMER_ORDER_DELIVERY_MATERIAL_AND_INVOICE_RISK_USER = B20_20_MKPF_USNAM
+		WHERE (
+            B20_20_VBAK_ERNAM = B20_20_MKPF_USNAM OR
+            B20_20_VBAP_ERNAM = B20_20_MKPF_USNAM
+        )AND (
+            B20_20_LIKP_ERNAM = B20_20_MKPF_USNAM OR
+            B20_20_LIPS_ERNAM = B20_20_MKPF_USNAM
+        ) AND (
+            B20_20_VBRK_ERNAM = B20_20_MKPF_USNAM OR
+            B20_20_VBRP_ERNAM = B20_20_MKPF_USNAM
+        ) AND B20_20_MKPF_USNAM = B20_20_KNA1_ERNAM AND B20_20_MKPF_USNAM <> ''
+
+    /*
+        Step 4.5: Flag the documents which the user create customer, sale order header/item, delivery, invoice header/itm is the same
+    */ 
+        UPDATE B20_20_CENTER_FACT_TABLE
+		SET B20_23_ZF_CUSTOMER_ORDER_DELIVERY_MATERIAL_AND_INVOICE_RISK_FLAG = 'Yes',
+			B20_23_ZF_KNA1_ERNAM_SAME_VBAK_VBAP_ERNAM_SAME_LIKP_LIPS_ERNAM_SAME_VBRK_VBRP_ERNAM_FLAG = 'Yes',
+            B20_23_ZF_CUSTOMER_ORDER_DELIVERY_AND_INVOICE_RISK_USER = B20_20_KNA1_ERNAM
+		WHERE (
+            B20_20_VBAK_ERNAM = B20_20_KNA1_ERNAM OR
+            B20_20_VBAP_ERNAM = B20_20_KNA1_ERNAM
+        )AND (
+            B20_20_LIKP_ERNAM = B20_20_KNA1_ERNAM OR
+            B20_20_LIPS_ERNAM = B20_20_KNA1_ERNAM
+        ) AND (
+            B20_20_VBRK_ERNAM = B20_20_KNA1_ERNAM OR
+            B20_20_VBRP_ERNAM = B20_20_KNA1_ERNAM
+        ) AND B20_20_KNA1_ERNAM <> ''
+
+    /*
+        Step 4.6: Flag the documents which the user create sale order header/item, delivery, invoice header/itm is the same
+    */ 
+        UPDATE B20_20_CENTER_FACT_TABLE
+		SET B20_23_ZF_CUSTOMER_ORDER_DELIVERY_MATERIAL_AND_INVOICE_RISK_FLAG = 'Yes',
+			B20_23_ZF_VBAK_VBAP_ERNAM_SAME_LIKP_LIPS_ERNAM_SAME_VBRK_VBRP_ERNAM_FLAG = 'Yes',
+            B20_23_ZF_ORDER_DELIVERY_AND_INVOICE_RISK_USER = B20_20_VBAK_ERNAM
+		WHERE (
+            B20_20_VBAK_ERNAM = B20_20_LIKP_ERNAM OR
+            B20_20_VBAK_ERNAM = B20_20_LIPS_ERNAM
+        ) AND (
+            B20_20_VBAK_ERNAM = B20_20_VBRK_ERNAM OR
+            B20_20_VBAK_ERNAM = B20_20_VBRP_ERNAM
+        ) AND B20_20_VBAK_ERNAM <> ''
+
+        UPDATE B20_20_CENTER_FACT_TABLE
+		SET B20_23_ZF_CUSTOMER_ORDER_DELIVERY_MATERIAL_AND_INVOICE_RISK_FLAG = 'Yes',
+			B20_23_ZF_VBAK_VBAP_ERNAM_SAME_LIKP_LIPS_ERNAM_SAME_VBRK_VBRP_ERNAM_FLAG = 'Yes',
+            B20_23_ZF_ORDER_DELIVERY_AND_INVOICE_RISK_USER = B20_20_VBAP_ERNAM
+		WHERE (
+            B20_20_VBAP_ERNAM = B20_20_LIKP_ERNAM OR
+            B20_20_VBAP_ERNAM = B20_20_LIPS_ERNAM
+        ) AND (
+            B20_20_VBAP_ERNAM = B20_20_VBRK_ERNAM OR
+            B20_20_VBAP_ERNAM = B20_20_VBRP_ERNAM
+        ) AND B20_20_VBAP_ERNAM <> ''
+
+    /*
+        Step 4.7: Flag the documents which the user create customer, sale order and invoice is the same.
+    */
+
+        UPDATE B20_20_CENTER_FACT_TABLE
+		SET B20_23_ZF_CUSTOMER_ORDER_DELIVERY_MATERIAL_AND_INVOICE_RISK_FLAG = 'Yes',
+			B20_23_ZF_KNA1_ERNAM_SAME_VBAK_VBAP_ERNAM_SAME_VBRK_VBRP_ERNAM_FLAG = 'Yes',
+            B20_23_ZF_CUSTOMER_ORDER_AND_INVOICE_RISK_USER = B20_20_KNA1_ERNAM
+		WHERE B20_20_KNA1_ERNAM <> '' AND
+              (
+                  B20_20_KNA1_ERNAM = B20_20_VBAK_ERNAM OR
+                  B20_20_KNA1_ERNAM = B20_20_VBAP_ERNAM
+              ) AND
+              (
+                  B20_20_KNA1_ERNAM = B20_20_VBRK_ERNAM OR
+                  B20_20_KNA1_ERNAM = B20_20_VBRP_ERNAM
+              )
+
+    /*
+        Step 4.8: Flag the documents which the user create sale order and invoice is the same.
+    */
+        UPDATE B20_20_CENTER_FACT_TABLE
+		SET B20_23_ZF_CUSTOMER_ORDER_DELIVERY_MATERIAL_AND_INVOICE_RISK_FLAG = 'Yes',
+			B20_23_ZF_VBAK_VBAP_ERNAM_SAME_VBRK_VBRP_ERNAM_FLAG = 'Yes',
+            B20_23_ZF_ORDER_AND_INVOICE_RISK_USER = B20_20_VBAK_ERNAM
+		WHERE (
+            B20_20_VBAK_ERNAM = B20_20_VBRK_ERNAM OR
+            B20_20_VBAK_ERNAM = B20_20_VBRP_ERNAM
+        ) AND B20_20_VBAK_ERNAM <> ''
+
+        UPDATE B20_20_CENTER_FACT_TABLE
+		SET B20_23_ZF_CUSTOMER_ORDER_DELIVERY_MATERIAL_AND_INVOICE_RISK_FLAG = 'Yes',
+			B20_23_ZF_VBAK_VBAP_ERNAM_SAME_VBRK_VBRP_ERNAM_FLAG = 'Yes',
+            B20_23_ZF_ORDER_AND_INVOICE_RISK_USER = B20_20_VBAP_ERNAM
+		WHERE (
+            B20_20_VBAP_ERNAM = B20_20_VBRK_ERNAM OR
+            B20_20_VBAP_ERNAM = B20_20_VBRP_ERNAM
+        ) AND B20_20_VBAP_ERNAM <> ''
+
+    /*
+        Step 5.1: Flag the documents which the user create customer, FI invoice and FI payment is the same.
+    */
+        UPDATE B20_20_CENTER_FACT_TABLE
+		SET B20_23_ZF_CUSTOMER_FI_INVOICE_AND_FI_PAYMENT_RISK_FLAG = 'Yes',
+			B20_23_ZF_KNA1_ERNAM_SAME_FI_INVOICE_ERNAM_SAME_FI_PAYMENT_ERNAM_FLAG = 'Yes',
+            B20_23_ZF_CUSTOMER_FI_INVOICE_AND_FI_PAYMENT_RISK_USER = B20_20_INV_KNA1_ERNAM
+		WHERE B20_20_INV_KNA1_ERNAM <> ''
+              AND B20_20_INV_KNA1_ERNAM = B20_20_INV_BKPF_USNAM
+              AND B20_20_INV_KNA1_ERNAM = B20_20_PAYMENT_BKPF_USNAM
+              AND EXISTS (
+                  SELECT TOP 1 1 FROM B20_10_IT_OTC_CLEARING_DOC_TYP_BUCKET
+                  WHERE B20_20_CENTER_FACT_TABLE.B20_10_ZF_CLEARING_INVOICE_DOC_KEY =  B20_10_IT_OTC_CLEARING_DOC_TYP_BUCKET.B20_10_ZF_CLEARING_INVOICE_DOC_KEY
+                  AND B20_10_IT_OTC_CLEARING_DOC_TYP_BUCKET.B20_10_ZF_AR_DOC_TYPE_BUCKET LIKE '%payment%'
+                  )
+
+    /*
+        Step 5.2: Flag the documents which the user create FI invoice and FI payment is the same.
+    */
+        UPDATE B20_20_CENTER_FACT_TABLE
+		SET B20_23_ZF_CUSTOMER_FI_INVOICE_AND_FI_PAYMENT_RISK_FLAG = 'Yes',
+			B20_23_ZF_FI_INVOICE_ERNAM_SAME_FI_PAYMENT_ERNAM_FLAG = 'Yes',
+            B20_23_ZF_FI_INVOICE_AND_FI_PAYMENT_RISK_USER = B20_20_INV_BKPF_USNAM
+		WHERE B20_20_INV_BKPF_USNAM <> ''
+              AND B20_20_INV_BKPF_USNAM = B20_20_PAYMENT_BKPF_USNAM
+              AND EXISTS (
+                  SELECT TOP 1 1 FROM B20_10_IT_OTC_CLEARING_DOC_TYP_BUCKET
+                  WHERE B20_20_CENTER_FACT_TABLE.B20_10_ZF_CLEARING_INVOICE_DOC_KEY =  B20_10_IT_OTC_CLEARING_DOC_TYP_BUCKET.B20_10_ZF_CLEARING_INVOICE_DOC_KEY
+                  AND B20_10_IT_OTC_CLEARING_DOC_TYP_BUCKET.B20_10_ZF_AR_DOC_TYPE_BUCKET LIKE '%payment%'
+                  )
+
+    /*
+        Step 6.1: Flag Sale orders conflict.
+    */
+        UPDATE B20_20_CENTER_FACT_TABLE
+		SET B20_20_ZF_SALE_ORDER_RISK_FLAG = 'Yes'
+        WHERE B20_21_ZF_CUSTOMER_AND_ORDER_RISK_FLAG = 'Yes'
+              OR B20_21_ZF_CUSTOMER_ORDER_AND_DELIVERY_RISK_FLAG = 'Yes'
+              OR B20_22_ZF_CUSTOMER_ORDER_DELIVERY_AND_MATERIAL_RISK_FLAG = 'Yes'
+              OR B20_23_ZF_CUSTOMER_ORDER_DELIVERY_MATERIAL_AND_INVOICE_RISK_FLAG = 'Yes'
+    /*
+        Step 6.2: Flag Invoice conflict.
+    */
+        UPDATE B20_20_CENTER_FACT_TABLE
+		SET B20_20_ZF_INVOICE_RISK_FLAG = 'Yes'
+        WHERE B20_23_ZF_CUSTOMER_ORDER_DELIVERY_MATERIAL_AND_INVOICE_RISK_FLAG = 'Yes'
+    /*
+        Step 6.3: Flag FI invoice conflict.
+    */
+        UPDATE B20_20_CENTER_FACT_TABLE
+		SET B20_20_ZF_FI_INVOICE_RISK_FLAG = 'Yes', B20_20_ZF_FI_PAYMENT_RISK_FLAG = 'Yes'
+        WHERE B20_23_ZF_CUSTOMER_FI_INVOICE_AND_FI_PAYMENT_RISK_FLAG = 'Yes'
+
+    /*
+        Step 6.3: Flag delivery conflict.
+    */
+        UPDATE B20_20_CENTER_FACT_TABLE
+		SET B20_20_ZF_DELIVERY_RISK_FLAG = 'Yes'
+        WHERE B20_21_ZF_ORDER_AND_DELIVERY_RISK_USER <> ''
+
+    /*
+        Step 6.3: Flag material conflict.
+    */
+        UPDATE B20_20_CENTER_FACT_TABLE
+		SET B20_20_ZF_GOODISSUE_RISK_FLAG = 'Yes'
+        WHERE B20_22_ZF_ORDER_DELIVERY_AND_MATERIAL_RISK_USER <> ''
+
+
+END
+GO

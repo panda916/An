@@ -1,0 +1,13 @@
+USE [DIVA_SAP_USAGE_ECC]
+GO
+SET ANSI_NULLS OFF
+GO
+SET QUOTED_IDENTIFIER OFF
+GO
+CREATE PROCEDURE [dbo].[ReadNChars]
+	@path [nvarchar](max),
+	@nrchars [int]
+WITH EXECUTE AS CALLER
+AS
+EXTERNAL NAME [CLRReadLines].[ReadWriteFileTips].[ReadNChars]
+GO

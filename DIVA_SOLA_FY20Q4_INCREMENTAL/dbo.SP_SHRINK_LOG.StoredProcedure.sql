@@ -1,0 +1,28 @@
+USE [DIVA_SOLA_FY20Q4_INCREMENTAL]
+GO
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+CREATE   PROC [dbo].[SP_SHRINK_LOG]
+AS
+Declare @Current_DB as nvarchar(max), @CMD as nvarchar(max)
+
+SELECT @Current_DB = DB_NAME()
+
+SET @CMD = '
+ALTER DATABASE ' + @Current_DB + ' SET RECOVERY FULL ;
+BACKUP database ' + @Current_DB + ' TO DISK=N''NUL:'' ' + char(10)
++ 'BACKUP LOG ' +   @Current_DB + ' TO DISK=N''NUL:'' ' + char(10)
+
++ 'DBCC SHRINKFILE(' + @Current_DB +'_log,1)
+DBCC SHRINKFILE(' + @Current_DB +',1)' 
+
+
+
+EXEC SP_EXECUTESQL  @CMD
+--BACKUP database DIVA_RUSSIA_UKRAINE_FY17_2 TO DISK=N'NUL:'
+--BACKUP LOG DIVA_RUSSIA_UKRAINE_FY17_2 TO DISK=N'NUL:'
+--DBCC SHRINKFILE(DIVA_RUSSIA_UKRAINE_FY17_2_log, 1)
+
+GO

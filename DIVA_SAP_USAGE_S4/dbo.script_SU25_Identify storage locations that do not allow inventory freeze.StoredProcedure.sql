@@ -1,0 +1,29 @@
+USE [DIVA_SAP_USAGE_S4]
+GO
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+
+CREATE PROCEDURE [dbo].[script_SU25_Identify storage locations that do not allow inventory freeze]
+WITH EXECUTE AS CALLER
+AS
+--DYNAMIC_SCRIPT_START
+
+---Upload the full table of storage location T001L and T001W to identify 
+---if they are all set for T001L_XBUFX-Freezing book inventory bal. allowed in stor. loc.
+
+EXEC SP_DROPTABLE SU25_01_RT_T001L_T001W;
+SELECT T001L_WERKS,
+       T001W_NAME1,
+	   T001L_LGORT,
+	   T001L_LGOBE,
+	   T001L_XBUFX,
+	   T001L_VSTEL,
+      (CASE WHEN T001L_XBUFX='X' THEN 'Yes'
+	   ELSE 'No' END) AS T001L_XBUFX_DESC
+INTO SU25_01_RT_T001L_T001W
+FROM BC28_01_IT_T001L_T001W; 
+EXEC SP_RENAME_FIELD 'SU25_01_','SU25_01_RT_T001L_T001W';
+
+GO

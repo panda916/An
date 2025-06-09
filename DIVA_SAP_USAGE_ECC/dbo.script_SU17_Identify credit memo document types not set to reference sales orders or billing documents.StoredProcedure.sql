@@ -1,0 +1,65 @@
+USE [DIVA_SAP_USAGE_ECC]
+GO
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+CREATE   PROCEDURE [dbo].[script_SU17_Identify credit memo document types not set to reference sales orders or billing documents]
+WITH EXECUTE AS CALLER
+AS
+--DYNAMIC_SCRIPT_START
+
+-- Script objective: Check copy control of credit memo request document type
+-- Step 1: select data from BO05_01_IT_SALE_DOCUMENT(sales document type cube)
+
+EXEC SP_REMOVE_TABLES 'SU17_01_XT_TVAK_CRE_MEMO_REQUEST_SD_COPY_CONTROL'
+
+SELECT 
+	DISTINCT
+	TVAK_AUART,
+	TVAKT_BEZEI,
+	TVAK_KOPGR,
+	TVHBT_BEZEI,
+	TVAK_LFARV,
+	TVAK_FKARV,
+	TVAK_FKARA,
+	TVAK_BEZOB,
+	--TVAK_CPFREE,
+	TVAK_VBTYP,
+	ZF_TVAK_BEZOB_DESCRIPTION,
+	TVLKT_VTEXT_TVAK,
+	TVFKT_VTEXT_TVAK,
+	TVFST_VTEXT_TVAK,
+	TVFKT_VTEXT_TVAK_FKARA,
+	ZF_TVAK_VBTYP_DESCRIPTION
+	-- Add flag to check copy control of Credit Memo Request document types 
+	--(
+	--CASE 
+	--	WHEN LEN(TVAK_CPFREE) > 0 THEN 'Yes'	 
+	--	ELSE 'No'
+	--END
+	--) AS ZF_TVAK_CPFREE_SUPPRESS_COPY_CONTROL_FLAG
+INTO SU17_01_XT_TVAK_CRE_MEMO_REQUEST_SD_COPY_CONTROL
+FROM BO05_01_IT_TVAK_SALE_DOCUMENT_TYPE
+-- Just get document type = credit memo 
+WHERE TVAK_VBTYP = 'K'
+
+-- Step 2: Create cube for sales document, just get sales document type = K(credit memo)
+EXEC SP_REMOVE_TABLES 'SU17_02_RT_VBAK_VBAP_SALES_DOC'
+	SELECT 
+		B33_01_IT_SALE_DOCUMENTS.*
+		--TVAKT_BEZEI -- Commented out since we already have this field in the cube
+	INTO SU17_02_RT_VBAK_VBAP_SALES_DOC
+	FROM B33_01_IT_SALE_DOCUMENTS
+	-- Get sales document type description
+	--LEFT JOIN A_TVAKT
+	--ON B33_VBAK_AUART = TVAKT_AUART
+	WHERE B33_VBAK_VBTYP = 'K'
+
+-- Unname the fields
+EXEC SP_UNNAME_FIELD 'B33_', 'SU17_02_RT_VBAK_VBAP_SALES_DOC'
+-- Rename the fields
+EXEC SP_RENAME_FIELD 'SU17_01_', 'SU17_01_XT_TVAK_CRE_MEMO_REQUEST_SD_COPY_CONTROL'
+EXEC SP_RENAME_FIELD 'SU17_02_', 'SU17_02_RT_VBAK_VBAP_SALES_DOC'
+
+GO

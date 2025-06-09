@@ -1,0 +1,44 @@
+USE [DIVA_SAP_USAGE_ECC]
+GO
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+CREATE PROCEDURE [dbo].[script_SU35_Check if release groups are assigned to release strategies]
+AS
+--DYNAMIC_SCRIPT_START
+
+--Script objetive: Identify the releaset strategies have release group not fount in relase group master table
+
+
+
+--Step 1 Get the list of release strategy
+--Flag the case of relase strategy that release group not found 
+EXEC SP_DROPTABLE SU35_01_RT_T16FS_T16FG_FRGGR_IS_NULL_FLAG
+
+SELECT * ,
+IIF(LEN(TRIM(BC04_01_T16FG_FRGGR))=0 OR BC04_01_T16FG_FRGGR IS NULL,'X','') AS ZF_T16FG_FRGGR_IS_NULL
+INTO SU35_01_RT_T16FS_T16FG_FRGGR_IS_NULL_FLAG
+FROM BC04_01_IT_T16FS_T16FG
+
+--Step 2 Get the list release groups do not have any relase strategy
+
+EXEC SP_DROPTABLE SU35_02_XT_T16FG_NO_RELEASE_STRA
+
+SELECT *
+INTO SU35_02_XT_T16FG_NO_RELEASE_STRA
+FROM BC32_01_IT_T16FG_T16FH
+WHERE   T16FG_FRGGR NOT IN 
+(
+	SELECT DISTINCT BC04_01_T16FS_FRGGR FROM  BC04_01_IT_T16FS_T16FG
+)
+
+
+--STep 3 Rename fields
+EXEC SP_UNNAME_FIELD 'BC04_01_', 'SU35_01_RT_T16FS_T16FG_FRGGR_IS_NULL_FLAG'
+EXEC SP_RENAME_FIELD 'SU35_01_', 'SU35_01_RT_T16FS_T16FG_FRGGR_IS_NULL_FLAG'
+
+EXEC SP_RENAME_FIELD 'SU35_02_','SU35_02_XT_T16FG_NO_RELEASE_STRA'
+
+
+GO

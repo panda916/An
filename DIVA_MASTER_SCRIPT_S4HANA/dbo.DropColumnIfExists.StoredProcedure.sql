@@ -1,0 +1,20 @@
+USE [DIVA_MASTER_SCRIPT_S4HANA]
+GO
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+
+CREATE PROCEDURE [dbo].[DropColumnIfExists]
+    @tableName NVARCHAR(128),
+    @columnName NVARCHAR(128)
+AS
+BEGIN
+    IF EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = @tableName AND COLUMN_NAME = @columnName)
+    BEGIN
+        DECLARE @sql NVARCHAR(MAX);
+        SET @sql = N'ALTER TABLE ' + QUOTENAME(@tableName) + N' DROP COLUMN ' + QUOTENAME(@columnName);
+        EXEC sp_executesql @sql;
+    END
+END;
+GO
